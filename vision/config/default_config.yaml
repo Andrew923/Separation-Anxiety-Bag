@@ -1,0 +1,50 @@
+# Stereo Vision Configuration
+
+# Camera settings
+camera:
+  device_id: 0
+  calibration_resolution: [2560, 960]  # For capturing calibration images
+  runtime_resolution: [1280, 480]       # For real-time operation
+  fps: 30
+
+# Checkerboard pattern
+checkerboard:
+  rows: 7           # Internal corners (vertical)
+  cols: 10          # Internal corners (horizontal)
+  square_size_mm: 25.0
+
+# Calibration settings
+calibration:
+  target_images: 20
+  min_valid_pairs: 15
+  rectification_alpha: 0.0  # 0=crop, 1=full
+
+# Corner detection
+corner_detection:
+  adaptive_thresh: true
+  fast_check: true
+  normalize_image: true
+  subpix_window: [11, 11]
+  subpix_max_iter: 30
+  subpix_epsilon: 0.001
+
+# StereoSGBM parameters
+stereo_sgbm:
+  min_disparity: 0
+  num_disparities: 64       # Divisible by 16
+  block_size: 5             # Odd number, 3-11
+  p1_multiplier: 8          # P1 = multiplier * 3 * block_size^2
+  p2_multiplier: 32         # P2 = multiplier * 3 * block_size^2
+  disp12_max_diff: 1
+  pre_filter_cap: 63
+  uniqueness_ratio: 10
+  speckle_window_size: 100
+  speckle_range: 32
+  mode: SGBM_3WAY           # Options: SGBM, HH, SGBM_3WAY, HH4
+
+# Display settings
+display:
+  colormap: JET
+  show_epipolar_lines: true
+  epipolar_line_count: 20
+  window_scale: 1.0

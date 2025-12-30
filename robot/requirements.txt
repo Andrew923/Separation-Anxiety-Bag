@@ -1,0 +1,13 @@
+# Robot control dependencies
+
+# GPIO control for Raspberry Pi
+RPi.GPIO>=0.7.0
+
+# Serial communication for UWB
+pyserial>=3.5
+
+# YAML configuration
+PyYAML>=5.4.0
+
+# Numerical operations
+numpy>=1.20.0

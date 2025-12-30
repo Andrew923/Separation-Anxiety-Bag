@@ -1,0 +1,29 @@
+# GPIO Pin Configuration for Raspberry Pi 4B
+# All BCM pin numbers
+# Hardware is not yet wired - adjust pins as needed
+
+motors:
+  left:
+    pwm_pin: 12          # Hardware PWM0 (GPIO 12)
+    dir_pin: 5           # Direction control
+  right:
+    pwm_pin: 13          # Hardware PWM1 (GPIO 13)
+    dir_pin: 6           # Direction control
+
+encoders:
+  left:
+    channel_a: 17        # Encoder A signal
+    channel_b: 27        # Encoder B signal
+  right:
+    channel_a: 22        # Encoder A signal
+    channel_b: 23        # Encoder B signal
+
+uwb:
+  anchor1:
+    uart_port: "/dev/ttyAMA0"   # Hardware UART (GPIO 14/15)
+  anchor2:
+    uart_port: "/dev/ttyUSB0"   # USB-UART adapter
+
+# PWM Configuration
+pwm:
+  frequency: 20000       # 20kHz PWM frequency (inaudible)

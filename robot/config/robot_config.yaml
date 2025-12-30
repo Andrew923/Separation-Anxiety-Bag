@@ -1,0 +1,87 @@
+# Robot Configuration
+
+# Physical Parameters
+robot:
+  wheel_diameter_mm: 52.0
+  wheel_base_mm: 200.0         # Distance between wheel centers - ADJUST TO ACTUAL
+  encoder_cpr: 700             # Counts per revolution at output (16 PPR * 43.8:1)
+  max_rpm: 251                 # No-load RPM of motors
+  gear_ratio: 43.8
+
+# Motor Configuration
+motors:
+  deadband: 10                 # PWM % below which motors don't move
+  ramp_rate: 50                # Max PWM change per control cycle
+
+# PID Configuration
+pid:
+  left:
+    kp: 1.5
+    ki: 0.5
+    kd: 0.05
+    integral_limit: 100.0
+    output_limit: 100.0
+  right:
+    kp: 1.5
+    ki: 0.5
+    kd: 0.05
+    integral_limit: 100.0
+    output_limit: 100.0
+  heading:
+    kp: 2.0
+    ki: 0.1
+    kd: 0.2
+    integral_limit: 50.0
+    output_limit: 100.0
+
+# UWB Configuration
+uwb:
+  baud_rate: 115200
+  network_id: 0x1234
+  # Anchor positions relative to robot center (x, y, z) in mm
+  # x: positive = right, y: positive = forward, z: positive = up
+  anchor1_offset_mm: [100.0, 50.0, 0.0]
+  anchor2_offset_mm: [-100.0, 50.0, 0.0]
+  timeout_ms: 100
+  max_range_mm: 15000          # 15m max range
+  # Calibration data (filled by calibration routine)
+  calibration:
+    front_offset_deg: 0.0
+    valid: false
+
+# VFH Configuration
+vfh:
+  num_sectors: 72              # 5-degree sectors (360/72 = 5)
+  min_range_mm: 200            # Ignore closer (inside robot body)
+  max_range_mm: 3000           # Max detection range
+  # Height filtering relative to camera
+  min_height_mm: 50            # Ignore floor
+  max_height_mm: 500           # Ignore above robot obstacles
+  obstacle_threshold: 0.3      # Density to consider blocked
+  safety_margin_mm: 150        # Extra clearance
+  wide_valley_threshold: 3     # Sectors for "wide" valley
+  narrow_valley_threshold: 1   # Minimum passable valley
+
+# Navigation Configuration
+navigation:
+  target_follow_distance_mm: 1500
+  follow_distance_tolerance_mm: 200
+  angular_tolerance_deg: 10.0
+  spin_threshold_deg: 45.0     # Start spinning if target > threshold from safe
+  stop_if_blocked_timeout_s: 3.0
+  max_linear_speed_mm_s: 500
+  max_angular_speed_deg_s: 90
+  approach_speed_factor: 0.5   # Slow down when close
+
+# Control Loop Timing
+control:
+  main_loop_hz: 20             # Navigation loop rate
+  motor_loop_hz: 100           # PID update rate
+  sensor_timeout_ms: 500       # Consider sensor dead after this
+
+# Camera Configuration (for depth integration)
+camera:
+  horizontal_fov_deg: 60.0     # Adjust based on actual camera
+  vertical_fov_deg: 45.0
+  height_mm: 200.0             # Camera height above ground
+  tilt_deg: 0.0                # Tilt angle (positive = down)

@@ -6,12 +6,11 @@ Fuses UWB target tracking with path planning obstacle avoidance.
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, Union
+from typing import Optional
 import time
 import math
 
 from .path_planner import PlannerResult
-from .vfh import VFHResult  # Keep for backward compatibility
 
 
 class NavigationState(Enum):
@@ -77,7 +76,7 @@ class NavigationController:
         self,
         target_angle_deg: Optional[float],
         target_range_mm: Optional[float],
-        planner_result: Union[PlannerResult, VFHResult]
+        planner_result: PlannerResult
     ) -> NavigationCommand:
         """
         Compute navigation command.
@@ -85,7 +84,7 @@ class NavigationController:
         Args:
             target_angle_deg: Angle to person (None if lost)
             target_range_mm: Distance to person (None if lost)
-            planner_result: Path planning result (PlannerResult or VFHResult)
+            planner_result: Path planning result
 
         Returns:
             NavigationCommand with velocities and state
@@ -129,7 +128,7 @@ class NavigationController:
         self,
         target_angle: float,
         target_range: float,
-        planner_result: Union[PlannerResult, VFHResult]
+        planner_result: PlannerResult
     ) -> NavigationCommand:
         """
         Follow target directly.
@@ -161,7 +160,7 @@ class NavigationController:
         self,
         target_angle: float,
         target_range: float,
-        planner_result: Union[PlannerResult, VFHResult]
+        planner_result: PlannerResult
     ) -> NavigationCommand:
         """
         Avoid obstacles while trying to reach target.

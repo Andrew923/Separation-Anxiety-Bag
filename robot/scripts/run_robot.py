@@ -316,7 +316,7 @@ class PersonFollowingRobot:
         )
         self._depth_preprocessor = DepthPreprocessor(preprocessor_config)
 
-        # Path planner (VFH, Follow-the-Gap, or APF based on config)
+        # Path planner (Follow-the-Gap or APF based on config)
         self._path_planner = create_path_planner(self._robot_config)
         print(f"    Using path planning algorithm: {self._path_planner.name}")
 

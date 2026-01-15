@@ -60,19 +60,6 @@ uwb:
     front_offset_deg: 0.0
     valid: false
 
-# VFH Configuration
-vfh:
-  num_sectors: 72              # 5-degree sectors (360/72 = 5)
-  min_range_mm: 200            # Ignore closer (inside robot body)
-  max_range_mm: 3000           # Max detection range
-  # Height filtering relative to camera
-  min_height_mm: 50            # Ignore floor
-  max_height_mm: 500           # Ignore above robot obstacles
-  obstacle_threshold: 0.3      # Density to consider blocked
-  safety_margin_mm: 150        # Extra clearance
-  wide_valley_threshold: 3     # Sectors for "wide" valley
-  narrow_valley_threshold: 1   # Minimum passable valley
-
 # Navigation Configuration
 navigation:
   target_follow_distance_mm: 1500
@@ -145,7 +132,7 @@ depth_preprocessing:
 # Path Planning Configuration
 # Select which algorithm to use for obstacle avoidance
 path_planning:
-  algorithm: "follow_gap"      # Options: "vfh", "follow_gap", "apf"
+  algorithm: "follow_gap"      # Options: "follow_gap", "apf"
 
 # Follow-the-Gap Configuration (used if algorithm = "follow_gap")
 # Finds gaps between obstacles and selects the best one

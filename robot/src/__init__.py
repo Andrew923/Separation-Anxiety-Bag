@@ -15,7 +15,6 @@ Components:
 - path_planner: Abstract base for path planning algorithms
 - follow_gap: Follow-the-Gap path planning
 - apf: Artificial Potential Fields path planning
-- vfh: Vector Field Histogram obstacle avoidance
 - navigation: High-level navigation controller
 - target_detector: Visual target detection (bullseye, checkerboard, or brightness)
 - target_tracker: Sensor fusion for UWB and visual tracking
@@ -42,8 +41,6 @@ from .floor_detection import (
 from .path_planner import PathPlanner, PlannerResult
 from .follow_gap import FollowTheGap, FollowGapConfig, Gap
 from .apf import ArtificialPotentialFields, APFConfig
-from .vfh import VectorFieldHistogram, VFHResult
-from .vfh_adapter import VFHAdapter
 from .path_planner_factory import create_path_planner, get_available_algorithms
 from .navigation import NavigationController, NavigationState, NavigationCommand
 from .target_detector import (
@@ -70,8 +67,6 @@ __all__ = [
     'PathPlanner', 'PlannerResult',
     'FollowTheGap', 'FollowGapConfig', 'Gap',
     'ArtificialPotentialFields', 'APFConfig',
-    'VectorFieldHistogram', 'VFHResult',
-    'VFHAdapter',
     'create_path_planner', 'get_available_algorithms',
     'NavigationController', 'NavigationState', 'NavigationCommand',
     'TargetDetector', 'TargetDetectorConfig', 'TargetDetection',

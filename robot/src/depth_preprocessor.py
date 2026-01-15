@@ -1,9 +1,8 @@
 """
-Depth map preprocessing for obstacle detection.
+Unified depth preprocessing for obstacle avoidance.
 
-Converts stereo depth maps to 1D distance arrays (virtual LIDAR scan)
-with floor/ceiling filtering. Algorithm-agnostic output suitable for
-VFH, Follow-the-Gap, Artificial Potential Fields, etc.
+Converts stereo depth maps into 1D distance arrays for path planning algorithms:
+Follow-the-Gap, Artificial Potential Fields, etc.
 """
 
 from dataclasses import dataclass

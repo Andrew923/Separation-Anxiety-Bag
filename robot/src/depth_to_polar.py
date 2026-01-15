@@ -1,8 +1,10 @@
 """
-Convert depth map to polar obstacle representation for VFH.
+Convert depth map to polar obstacle representation.
 
 Takes stereo depth map and converts to angular sectors with
 height filtering to ignore floor and above-robot obstacles.
+
+DEPRECATED: Use DepthPreprocessor instead for new code.
 """
 
 from dataclasses import dataclass
@@ -31,7 +33,9 @@ class DepthToPolar:
     Key operations:
     1. Filter by height (remove floor, ceiling)
     2. Convert to polar coordinates (angle, distance)
-    3. Aggregate into angular sectors for VFH
+    3. Aggregate into angular sectors for path planning
+
+    DEPRECATED: Use DepthPreprocessor instead.
     """
 
     def __init__(self, config: DepthToPolarConfig):

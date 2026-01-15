@@ -1,7 +1,7 @@
 """
 Abstract base class for path planning algorithms.
 
-All path planners (VFH, Follow-the-Gap, APF) implement this interface
+All path planners (Follow-the-Gap, APF) implement this interface
 to allow algorithm selection via configuration.
 """
 

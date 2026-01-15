@@ -11,9 +11,6 @@ Usage:
 
     # Use APF algorithm
     python robot/scripts/integration_test.py --algorithm apf
-
-    # Use VFH algorithm
-    python robot/scripts/integration_test.py --algorithm vfh
 """
 
 import sys
@@ -57,7 +54,7 @@ class IntegrationConfig:
     calibration_path: str = "vision/data/calibration_data"
     device_id: int = 0
     config_path: Optional[str] = None
-    algorithm: str = "follow_gap"  # "follow_gap", "apf", or "vfh"
+    algorithm: str = "follow_gap"  # "follow_gap" or "apf"
     target_fps: float = 20.0
 
 
@@ -306,7 +303,7 @@ class IntegrationTester:
         )
         self._depth_preprocessor = DepthPreprocessor(preprocessor_config)
 
-        # Path planner (Follow-the-Gap, APF, or VFH based on config)
+        # Path planner (Follow-the-Gap or APF based on config)
         self._path_planner = create_path_planner(self._robot_config)
         print(f"    Using algorithm: {self._path_planner.name}")
 
@@ -857,13 +854,12 @@ def parse_args() -> argparse.Namespace:
 Examples:
   python robot/scripts/integration_test.py                    # Default (follow_gap)
   python robot/scripts/integration_test.py --algorithm apf    # Use APF
-  python robot/scripts/integration_test.py --algorithm vfh    # Use VFH
         """
     )
     parser.add_argument(
         '--algorithm', '-a',
         type=str,
-        choices=['follow_gap', 'apf', 'vfh'],
+        choices=['follow_gap', 'apf'],
         default='follow_gap',
         help='Path planning algorithm (default: follow_gap)'
     )

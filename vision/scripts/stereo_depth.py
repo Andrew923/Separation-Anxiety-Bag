@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Real-time stereo depth estimation using StereoSGBM.
+
+Uses robot_config.yaml as the single source of truth for stereo/WLS configuration.
 """
 
 import sys
@@ -11,13 +13,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Add parent directory to path for imports
+# Add parent directories to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.camera import StereoCamera
 from src.calibration import load_calibration
-from src.stereo_matcher import StereoMatcher, SGBMParams, create_parameter_trackbars
+from src.stereo_matcher import StereoMatcher, SGBMParams, WLSParams, create_parameter_trackbars
 from src.utils import draw_epipolar_lines, resize_for_display
+from robot.src.gpio_config import load_robot_config
 
 
 def main():
@@ -25,24 +29,20 @@ def main():
         description='Real-time stereo depth estimation'
     )
     parser.add_argument(
-        '--calibration', type=str, default='data/calibration_data',
-        help='Path to calibration directory'
+        '--config', type=str, default=None,
+        help='Path to robot_config.yaml (default: robot/config/robot_config.yaml)'
     )
     parser.add_argument(
-        '--device', type=int, default=0,
-        help='Camera device ID'
+        '--calibration', type=str, default=None,
+        help='Path to calibration directory (overrides config)'
     )
     parser.add_argument(
-        '--resolution', choices=['high', 'medium', 'low'], default='medium',
-        help='Resolution: high=2560x960, medium=1280x480, low=640x240'
+        '--device', type=int, default=None,
+        help='Camera device ID (overrides config)'
     )
     parser.add_argument(
-        '--num-disparities', type=int, default=64,
-        help='Number of disparities (must be divisible by 16)'
-    )
-    parser.add_argument(
-        '--block-size', type=int, default=5,
-        help='SGBM block size (odd number, 3-11)'
+        '--resolution', choices=['high', 'medium', 'low'], default=None,
+        help='Resolution: high=2560x960, medium=1280x480, low=640x240 (overrides config)'
     )
     parser.add_argument(
         '--show-params', action='store_true',
@@ -53,7 +53,16 @@ def main():
         choices=['JET', 'TURBO', 'MAGMA', 'INFERNO', 'PLASMA', 'VIRIDIS'],
         help='Colormap for disparity visualization'
     )
+    parser.add_argument(
+        '--no-wls', action='store_true',
+        help='Disable WLS filtering (overrides config)'
+    )
     args = parser.parse_args()
+
+    # Load robot config (source of truth)
+    print("Loading robot configuration...")
+    robot_config = load_robot_config(args.config)
+    stereo_cfg = robot_config.get('stereo_camera', {})
 
     # Resolution mapping
     resolutions = {
@@ -61,10 +70,21 @@ def main():
         'medium': (1280, 480),
         'low': (640, 240)
     }
-    resolution = resolutions[args.resolution]
+
+    # Use CLI args if provided, otherwise fall back to config
+    resolution_key = args.resolution or stereo_cfg.get('resolution', 'low')
+    resolution = resolutions[resolution_key]
+    device_id = args.device if args.device is not None else stereo_cfg.get('device_id', 0)
 
     # Load calibration
-    calib_path = Path(__file__).parent.parent / args.calibration
+    if args.calibration:
+        calib_path = Path(args.calibration)
+    else:
+        # Use config path (relative to project root)
+        config_calib_path = stereo_cfg.get('calibration_path', 'vision/data/calibration_data')
+        project_root = Path(__file__).parent.parent.parent
+        calib_path = project_root / config_calib_path
+
     print(f"Loading calibration from {calib_path}...")
 
     try:
@@ -84,20 +104,30 @@ def main():
         print("For best results, use the same resolution as calibration")
 
     # Setup SGBM parameters
-    params = SGBMParams(
-        num_disparities=args.num_disparities,
-        block_size=args.block_size
-    )
+    params = SGBMParams()
+
+    # Setup WLS parameters from config
+    wls_params = None
+    wls_cfg = stereo_cfg.get('wls_filter', {})
+    if wls_cfg.get('enabled', False) and not args.no_wls:
+        wls_params = WLSParams(
+            enabled=True,
+            lambda_=wls_cfg.get('lambda', 8000.0),
+            sigma_color=wls_cfg.get('sigma_color', 1.5),
+            confidence_threshold=wls_cfg.get('confidence_threshold', 0.0)
+        )
+        print(f"WLS filtering enabled: lambda={wls_params.lambda_}, sigma={wls_params.sigma_color}, conf_thresh={wls_params.confidence_threshold}")
+    else:
+        print("WLS filtering disabled")
 
     # Create stereo matcher
-    matcher = StereoMatcher(calibration_data, params)
+    matcher = StereoMatcher(calibration_data, params, wls_params)
     matcher.set_colormap(args.colormap)
 
     print(f"Starting stereo depth estimation")
-    print(f"  Camera: /dev/video{args.device}")
+    print(f"  Camera: /dev/video{device_id}")
     print(f"  Resolution: {resolution[0]}x{resolution[1]} ({single_res[0]}x{single_res[1]} per camera)")
-    print(f"  Num disparities: {args.num_disparities}")
-    print(f"  Block size: {args.block_size}")
+    print(f"  WLS Filter: {'enabled' if wls_params else 'disabled'}")
     print()
     print("Controls:")
     print("  Q - Quit")
@@ -108,7 +138,7 @@ def main():
     print()
 
     # Open camera
-    camera = StereoCamera(args.device, resolution, fps=30)
+    camera = StereoCamera(device_id, resolution, fps=30)
     if not camera.open():
         print("Error: Could not open camera")
         return 1

@@ -1,16 +1,17 @@
 """
 High-level navigation controller for person following.
 
-Fuses UWB target tracking with VFH obstacle avoidance.
+Fuses UWB target tracking with path planning obstacle avoidance.
 """
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional
+from typing import Optional, Union
 import time
 import math
 
-from .vfh import VFHResult
+from .path_planner import PlannerResult
+from .vfh import VFHResult  # Keep for backward compatibility
 
 
 class NavigationState(Enum):
@@ -47,11 +48,11 @@ class NavigationCommand:
 
 class NavigationController:
     """
-    Fuses UWB target tracking with VFH obstacle avoidance.
+    Fuses UWB target tracking with path planning obstacle avoidance.
 
     Decision logic:
     1. Get target angle from UWB
-    2. Check if target direction is safe via VFH
+    2. Check if target direction is safe via path planner
     3. If safe: drive toward target
     4. If blocked: find nearest safe direction
     5. If all blocked: spin in place
@@ -76,7 +77,7 @@ class NavigationController:
         self,
         target_angle_deg: Optional[float],
         target_range_mm: Optional[float],
-        vfh_result: VFHResult
+        planner_result: Union[PlannerResult, VFHResult]
     ) -> NavigationCommand:
         """
         Compute navigation command.
@@ -84,7 +85,7 @@ class NavigationController:
         Args:
             target_angle_deg: Angle to person (None if lost)
             target_range_mm: Distance to person (None if lost)
-            vfh_result: VFH obstacle analysis
+            planner_result: Path planning result (PlannerResult or VFHResult)
 
         Returns:
             NavigationCommand with velocities and state
@@ -98,37 +99,37 @@ class NavigationController:
         self._last_target_angle = target_angle_deg
 
         # Check if target direction is safe
-        target_safe = vfh_result.best_heading_deg is not None
+        target_safe = planner_result.best_heading_deg is not None
 
-        if not target_safe and not vfh_result.can_proceed:
+        if not target_safe and not planner_result.can_proceed:
             # All directions blocked
             return self._handle_all_blocked()
 
         # Reset spin timer if we can proceed
-        if vfh_result.can_proceed:
+        if planner_result.can_proceed:
             self._spin_start_time = None
 
         # Determine heading and state
-        if target_safe and abs(target_angle_deg - (vfh_result.best_heading_deg or 0)) < self._config.spin_threshold_deg:
+        if target_safe and abs(target_angle_deg - (planner_result.best_heading_deg or 0)) < self._config.spin_threshold_deg:
             # Target direction is relatively clear
             return self._follow_target(
                 target_angle_deg,
                 target_range_mm,
-                vfh_result
+                planner_result
             )
         else:
             # Need to avoid obstacles
             return self._avoid_obstacles(
                 target_angle_deg,
                 target_range_mm,
-                vfh_result
+                planner_result
             )
 
     def _follow_target(
         self,
         target_angle: float,
         target_range: float,
-        vfh_result: VFHResult
+        planner_result: Union[PlannerResult, VFHResult]
     ) -> NavigationCommand:
         """
         Follow target directly.
@@ -136,7 +137,7 @@ class NavigationController:
         Args:
             target_angle: Angle to target
             target_range: Distance to target
-            vfh_result: VFH result
+            planner_result: Path planning result
 
         Returns:
             Navigation command
@@ -160,7 +161,7 @@ class NavigationController:
         self,
         target_angle: float,
         target_range: float,
-        vfh_result: VFHResult
+        planner_result: Union[PlannerResult, VFHResult]
     ) -> NavigationCommand:
         """
         Avoid obstacles while trying to reach target.
@@ -168,7 +169,7 @@ class NavigationController:
         Args:
             target_angle: Angle to target
             target_range: Distance to target
-            vfh_result: VFH result
+            planner_result: Path planning result
 
         Returns:
             Navigation command
@@ -176,9 +177,9 @@ class NavigationController:
         self._state = NavigationState.AVOIDING
         config = self._config
 
-        # Use VFH's recommended heading
-        if vfh_result.best_heading_deg is not None:
-            heading = vfh_result.best_heading_deg
+        # Use planner's recommended heading
+        if planner_result.best_heading_deg is not None:
+            heading = planner_result.best_heading_deg
         else:
             # No safe direction - shouldn't reach here
             return self._handle_all_blocked()

@@ -42,6 +42,14 @@ stereo_sgbm:
   speckle_range: 32
   mode: SGBM_3WAY           # Options: SGBM, HH, SGBM_3WAY, HH4
 
+# WLS (Weighted Least Squares) post-filtering
+# Improves disparity quality by reducing noise and preserving edges
+wls_filter:
+  enabled: true
+  lambda: 8000.0            # Regularization strength (higher = stricter edges)
+  sigma_color: 1.5          # Edge sensitivity (0.8-2.0)
+  confidence_threshold: 100.0  # Min confidence to accept depth (0-255), 0 = disabled
+
 # Display settings
 display:
   colormap: JET

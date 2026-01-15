@@ -160,6 +160,71 @@ class StereoCamera:
         self.resolution = (actual_width, actual_height)
         return actual_width == resolution[0] and actual_height == resolution[1]
 
+    def set_auto_exposure(self, enabled: bool) -> bool:
+        """
+        Enable or disable auto exposure.
+
+        Args:
+            enabled: True for auto exposure, False for manual
+
+        Returns:
+            True if setting was applied successfully
+        """
+        if not self._is_open or self.cap is None:
+            return False
+
+        # V4L2 auto exposure: 1 = manual, 3 = auto
+        mode = 3 if enabled else 1
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, mode)
+        return True
+
+    def set_exposure(self, exposure: float) -> bool:
+        """
+        Set manual exposure value.
+
+        Note: Auto exposure must be disabled first for this to take effect.
+        The exposure value range depends on the camera. Common ranges:
+        - USB cameras: 1-5000 (higher = brighter)
+        - Some cameras use negative values in log scale
+
+        Args:
+            exposure: Exposure value (camera-dependent units)
+
+        Returns:
+            True if setting was applied successfully
+        """
+        if not self._is_open or self.cap is None:
+            return False
+
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+        return True
+
+    def get_exposure(self) -> Optional[float]:
+        """
+        Get current exposure value.
+
+        Returns:
+            Current exposure value, or None if unavailable
+        """
+        if not self._is_open or self.cap is None:
+            return None
+
+        return self.cap.get(cv2.CAP_PROP_EXPOSURE)
+
+    def get_auto_exposure(self) -> Optional[bool]:
+        """
+        Get current auto exposure state.
+
+        Returns:
+            True if auto exposure enabled, False if manual, None if unavailable
+        """
+        if not self._is_open or self.cap is None:
+            return None
+
+        mode = self.cap.get(cv2.CAP_PROP_AUTO_EXPOSURE)
+        # V4L2: 1 = manual, 3 = auto
+        return mode == 3
+
     def __enter__(self):
         """Context manager entry."""
         self.open()

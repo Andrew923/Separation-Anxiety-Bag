@@ -7,6 +7,7 @@ robot:
   encoder_cpr: 700             # Counts per revolution at output (16 PPR * 43.8:1)
   max_rpm: 251                 # No-load RPM of motors
   gear_ratio: 43.8
+  robot_width_mm: 300.0        # Robot width for obstacle clearance calculations
 
 # Motor Configuration
 motors:
@@ -37,13 +38,23 @@ pid:
 # UWB Configuration
 uwb:
   baud_rate: 115200
-  network_id: 0x1234
+  network_id: "0x1234"           # 8 bytes ASCII network group ID (must match TAG)
+  anchor1_address: "ANCHOR01"    # 8 bytes ASCII device address
+  anchor2_address: "ANCHOR02"    # 8 bytes ASCII device address
+  target_address: "TAG001"       # Address of TAG to track
   # Anchor positions relative to robot center (x, y, z) in mm
   # x: positive = right, y: positive = forward, z: positive = up
-  anchor1_offset_mm: [100.0, 50.0, 0.0]
-  anchor2_offset_mm: [-100.0, 50.0, 0.0]
+  anchor1_offset_mm: [-130.0, 50.0, 0.0]
+  anchor2_offset_mm: [130.0, 50.0, 0.0]
   timeout_ms: 100
   max_range_mm: 15000          # 15m max range
+  # Range filtering to reduce noise and angle jitter
+  # Recommended: enabled with alpha 0.2-0.3 for stationary/slow targets
+  filter:
+    enabled: true
+    ema_alpha: 0.25              # EMA smoothing factor (0.1=smooth, 0.5=responsive)
+    outlier_threshold_mm: 200.0  # Reject readings deviating more than this
+    min_samples: 3               # Wait for N samples before output is valid
   # Calibration data (filled by calibration routine)
   calibration:
     front_offset_deg: 0.0
@@ -85,3 +96,133 @@ camera:
   vertical_fov_deg: 45.0
   height_mm: 200.0             # Camera height above ground
   tilt_deg: 0.0                # Tilt angle (positive = down)
+
+# Stereo Camera Configuration (for depth/obstacle detection)
+stereo_camera:
+  device_id: 0
+  resolution: "low"            # "low" (320x240), "medium" (640x480), "high" (1280x960)
+  fps: 30
+  calibration_path: "vision/data/calibration_data"
+  # WLS (Weighted Least Squares) post-filtering for improved depth quality
+  wls_filter:
+    enabled: false
+    lambda: 8000.0             # Regularization strength (higher = stricter edges)
+    sigma_color: 1.5           # Edge sensitivity (0.8-2.0, lower = more sensitive)
+    confidence_threshold: 100.0  # Min confidence to accept depth (0-255), 0 = disabled
+
+# Tracking Camera Configuration (for brightness-based target detection)
+# Separate single camera that runs at low exposure to detect flashlights
+tracking_camera:
+  device_id: 2
+  resolution: [640, 480]       # Min MJPEG resolution for this camera
+  fps: 30
+  exposure: 20                 # Low exposure to isolate bright lights
+  auto_exposure: false
+  horizontal_fov_deg: 60.0     # Adjust based on actual camera
+
+# Depth Preprocessing Configuration
+# Use tune_floor_detection.py to tune these parameters
+depth_preprocessing:
+  min_range_mm: 200            # Ignore closer than this (robot body)
+  max_range_mm: 3000           # Ignore farther than this
+  num_sectors: 72              # Number of sectors in 1D output (like virtual LIDAR)
+
+  # Floor detection method: "height" or "adaptive"
+  floor_detection_method: "height"
+
+  # Height-based floor detection (used if method = "height")
+  height_floor:
+    floor_threshold_mm: 50     # Ignore points below this height (floor)
+    robot_height_mm: 500       # Ignore points above this height (ceiling/over robot)
+
+  # Adaptive floor detection (used if method = "adaptive")
+  # Threshold scales with depth: threshold = base + depth * scaling_factor
+  adaptive_floor:
+    base_threshold_mm: 50
+    depth_scaling_factor: 0.02
+    robot_height_mm: 500
+
+# Path Planning Configuration
+# Select which algorithm to use for obstacle avoidance
+path_planning:
+  algorithm: "follow_gap"      # Options: "vfh", "follow_gap", "apf"
+
+# Follow-the-Gap Configuration (used if algorithm = "follow_gap")
+# Finds gaps between obstacles and selects the best one
+follow_gap:
+  min_gap_width_deg: 15.0      # Minimum gap width in degrees
+  safety_margin_mm: 100.0      # Extra clearance on each side of robot
+  # Gap scoring weights (should sum to 1.0)
+  target_weight: 0.5           # Priority for gaps toward target
+  width_weight: 0.3            # Priority for wider gaps
+  depth_weight: 0.2            # Priority for gaps with more clearance
+
+# Artificial Potential Fields Configuration (used if algorithm = "apf")
+# Uses attractive/repulsive forces to compute heading
+apf:
+  attractive_gain: 1.0         # Strength of attraction to target
+  repulsive_gain: 500.0        # Strength of obstacle repulsion
+  repulsion_radius_mm: 1500.0  # Distance at which repulsion starts
+  repulsion_falloff: "quadratic"  # Options: "linear", "quadratic", "exponential"
+  emergency_stop_distance_mm: 150.0  # Stop if any obstacle closer than this
+  min_resultant_magnitude: 0.1       # Threshold to detect stuck state
+
+# Target Detection Configuration
+# Visual target detection using configurable pattern recognition
+target_detection:
+  pattern_type: "brightness"  # "bullseye" or "checkerboard"
+  depth_sample_radius: 3        # Radius for depth sampling around center
+
+  # Bullseye settings (used if pattern_type = "bullseye")
+  bullseye:
+    min_rings: 1                 # Minimum concentric circles to detect
+    circularity_threshold: 0.3  # How circular contours must be (0-1)
+    concentricity_threshold_px: 5  # Max center offset between rings (pixels)
+    min_radius_px: 10            # Ignore circles smaller than this
+    max_radius_px: 150           # Ignore circles larger than this
+    blur_kernel_size: 1          # Gaussian blur kernel size
+    canny_low: 50                # Canny edge detection low threshold
+    canny_high: 150              # Canny edge detection high threshold
+
+  # Checkerboard settings (used if pattern_type = "checkerboard")
+  # 2x2 pattern with black at top-left/bottom-right
+  checkerboard:
+    sample_size: 1               # Pixels to sample in each quadrant
+    contrast_threshold: 0.5      # Min contrast between B/W quadrants
+    corner_quality: 0.001          # Shi-Tomasi corner quality level
+    min_distance: 5             # Min distance between detected corners
+    max_corners: 50              # Max corners to evaluate
+    block_size: 3                # Block size for corner detection
+    diagonal_tolerance: 0.2      # Max difference within diagonal pairs
+
+  # Brightness settings (used if pattern_type = "brightness")
+  # Detects bright spots like phone flashlights using low camera exposure
+  # Tuned for dedicated tracking camera on device 2
+  brightness:
+    threshold: 230               # Min pixel value to consider bright
+    gain: 1.60                   # Gain multiplier to amplify brightness
+    blur_kernel_size: 1          # Blur kernel size (1 = no blur)
+    min_area_px: 20              # Min blob area in pixels
+    max_area_px: 200             # Max blob area in pixels
+    use_low_exposure: true       # Use low camera exposure for detection
+    low_exposure: 20             # Camera exposure value (lower = darker)
+    settle_frames: 2             # Frames to discard after exposure change
+
+# Target Tracking Configuration (sensor fusion)
+# Fuses UWB ranging and visual bullseye detection
+target_tracking:
+  # EMA filter settings (shared between UWB and visual)
+  ema_alpha: 0.25              # Range smoothing (0.1=smooth, 0.5=responsive)
+  outlier_threshold_mm: 200.0  # Reject range changes larger than this
+  angle_ema_alpha: 0.3         # Angle smoothing factor
+
+  # Visual preference settings
+  visual_range_threshold_mm: 3000.0   # Prefer visual when closer than this
+  visual_confidence_threshold: 0.5    # Minimum bullseye confidence to use
+
+  # Timeout settings
+  visual_timeout_ms: 500.0     # Consider visual stale after this
+  uwb_timeout_ms: 500.0        # Consider UWB stale after this
+
+  # Minimum samples before output is valid
+  min_samples: 3

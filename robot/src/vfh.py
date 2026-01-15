@@ -10,6 +10,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from .depth_to_polar import DepthToPolar, DepthToPolarConfig
+from .depth_preprocessor import DepthPreprocessor, DepthPreprocessorConfig
 
 
 @dataclass
@@ -160,6 +161,59 @@ class VectorFieldHistogram:
                 f"config {self._config.num_sectors}"
             )
         self._histogram = histogram.copy()
+
+        # Apply smoothing
+        self._histogram = np.convolve(
+            self._histogram,
+            self._smoothing_kernel,
+            mode='same'
+        )
+
+    def update_from_distances(
+        self,
+        distances: np.ndarray,
+        camera_fov_h_deg: float = 60.0
+    ) -> None:
+        """
+        Update from preprocessed 1D distance array.
+
+        This is the preferred method for new code using DepthPreprocessor.
+        Converts distances to obstacle density histogram for VFH processing.
+
+        Args:
+            distances: Min distance per sector in mm (from DepthPreprocessor)
+            camera_fov_h_deg: Horizontal FOV of the distance data
+        """
+        config = self._config
+        n_input = len(distances)
+
+        # Map input sectors (camera FOV) to full 360-degree histogram
+        visible_sectors = int(camera_fov_h_deg / (360.0 / config.num_sectors))
+        center_sector = config.num_sectors // 2
+
+        # Reset histogram
+        self._histogram = np.zeros(config.num_sectors)
+        self._min_distances = np.full(config.num_sectors, config.max_range_mm)
+
+        # Fill visible portion
+        start = center_sector - visible_sectors // 2
+        end = start + min(n_input, visible_sectors)
+
+        if start >= 0 and end <= config.num_sectors:
+            # Copy distances directly
+            self._min_distances[start:end] = distances[:end - start]
+
+            # Convert distances to density (inverse relationship)
+            # Closer obstacles -> higher density
+            for i, dist in enumerate(distances[:end - start]):
+                sector = start + i
+                if dist < config.max_range_mm:
+                    # Normalize distance to [0, 1] density
+                    # Close = high density, far = low density
+                    normalized = 1.0 - (dist - config.min_range_mm) / (
+                        config.max_range_mm - config.min_range_mm
+                    )
+                    self._histogram[sector] = max(0.0, min(1.0, normalized))
 
         # Apply smoothing
         self._histogram = np.convolve(

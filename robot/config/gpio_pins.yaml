@@ -20,9 +20,11 @@ encoders:
 
 uwb:
   anchor1:
-    uart_port: "/dev/ttyAMA0"   # Hardware UART (GPIO 14/15)
+    uart_port: "/dev/ttyAMA0"   # UART0 on GPIO 14 (TX) / 15 (RX)
+    reset_pin: 18               # Connect to module RESET pin (active low)
   anchor2:
-    uart_port: "/dev/ttyUSB0"   # USB-UART adapter
+    uart_port: "/dev/ttyAMA2"   # UART2 on GPIO 0 (TX) / 1 (RX)
+    reset_pin:  7               # Connect to module RESET pin (active low)
 
 # PWM Configuration
 pwm:

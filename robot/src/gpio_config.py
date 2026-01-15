@@ -26,6 +26,7 @@ class EncoderPins:
 class UWBConfig:
     """Configuration for a UWB module."""
     uart_port: str
+    reset_pin: Optional[int] = None
 
 
 @dataclass
@@ -64,10 +65,12 @@ class GPIOConfig:
             channel_b=encoders.get('right', {}).get('channel_b', 23)
         )
         uwb_anchor1 = UWBConfig(
-            uart_port=uwb.get('anchor1', {}).get('uart_port', '/dev/ttyAMA0')
+            uart_port=uwb.get('anchor1', {}).get('uart_port', '/dev/ttyAMA0'),
+            reset_pin=uwb.get('anchor1', {}).get('reset_pin')
         )
         uwb_anchor2 = UWBConfig(
-            uart_port=uwb.get('anchor2', {}).get('uart_port', '/dev/ttyUSB0')
+            uart_port=uwb.get('anchor2', {}).get('uart_port', '/dev/ttyUSB0'),
+            reset_pin=uwb.get('anchor2', {}).get('reset_pin')
         )
 
         return cls(

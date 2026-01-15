@@ -49,10 +49,13 @@ class TargetDetectorConfig:
 
     # Brightness settings (for flashlight detection)
     brightness_threshold: int = 230          # Min pixel value to consider bright (after gain)
-    brightness_min_area_px: int = 20         # Min blob area in pixels
-    brightness_max_area_px: int = 5000       # Max blob area in pixels
-    brightness_blur_kernel_size: int = 5     # Blur to reduce noise
-    brightness_gain: float = 0.8             # Gain multiplier to suppress ambient light
+    brightness_min_area_px: int = 1          # Min blob area in pixels
+    brightness_max_area_px: int = 100        # Max blob area in pixels
+    brightness_blur_kernel_size: int = 1     # Blur to reduce noise
+    brightness_gain: float = 2.0             # Gain multiplier to amplify brightness
+    brightness_use_low_exposure: bool = True # Use low exposure capture for detection
+    brightness_low_exposure: float = 5.0     # Low exposure value for camera capture
+    brightness_settle_frames: int = 2        # Frames to discard after exposure change
 
 
 @dataclass
@@ -439,6 +442,14 @@ class BrightnessPattern(PatternDetector):
 
     Uses thresholding to find saturated bright regions, then locates
     the centroid of the brightest blob as the target center.
+
+    This detector is designed to work with a dedicated tracking camera
+    that runs at fixed low exposure. The low exposure suppresses ambient
+    light reflections while keeping the flashlight visible.
+
+    Note: Unlike previous versions, this detector does NOT manage camera
+    exposure. The tracking camera should be configured with low exposure
+    at initialization time.
     """
 
     def __init__(self, config: TargetDetectorConfig):
@@ -450,6 +461,21 @@ class BrightnessPattern(PatternDetector):
         depth_map: Optional[np.ndarray],
         horizontal_fov_deg: float
     ) -> Optional[TargetDetection]:
+        """
+        Detect bright spots in frame.
+
+        The frame should come from a camera with low exposure settings
+        to isolate bright light sources from ambient light.
+
+        Args:
+            frame: BGR or grayscale image from low-exposure camera
+            depth_map: Optional depth map in mm (not used for brightness,
+                      UWB provides range instead)
+            horizontal_fov_deg: Camera horizontal field of view
+
+        Returns:
+            TargetDetection if found, None otherwise
+        """
         if frame is None or frame.size == 0:
             return None
 
@@ -462,16 +488,15 @@ class BrightnessPattern(PatternDetector):
         else:
             gray = frame.copy()
 
-        # Apply gain reduction to suppress ambient light reflections
-        # This simulates low exposure - only very bright sources (flashlight) remain visible
+        # Apply gain to amplify brightness differences
         gain = self._config.brightness_gain
-        darkened = (gray.astype(np.float32) * gain).clip(0, 255).astype(np.uint8)
+        amplified = (gray.astype(np.float32) * gain).clip(0, 255).astype(np.uint8)
 
         # Apply blur to reduce noise
         kernel_size = self._config.brightness_blur_kernel_size
         if kernel_size % 2 == 0:
             kernel_size += 1
-        blurred = cv2.GaussianBlur(darkened, (kernel_size, kernel_size), 0)
+        blurred = cv2.GaussianBlur(amplified, (kernel_size, kernel_size), 0)
 
         # Threshold to find bright regions
         _, binary = cv2.threshold(
@@ -528,13 +553,9 @@ class BrightnessPattern(PatternDetector):
         # Compute angle
         angle_deg = _pixel_to_angle(cx, frame_width, horizontal_fov_deg)
 
-        # Get depth
+        # Note: depth_map is ignored for brightness detection.
+        # UWB provides range instead, so we don't sample depth here.
         range_mm = None
-        if depth_map is not None:
-            range_mm = _sample_depth(
-                depth_map, cx, cy,
-                self._config.depth_sample_radius
-            )
 
         # Confidence based on brightness (normalized)
         confidence = best_brightness / 255.0
@@ -556,7 +577,11 @@ class TargetDetector:
     Delegates to appropriate pattern detector based on configuration.
     """
 
-    def __init__(self, config: TargetDetectorConfig, horizontal_fov_deg: float):
+    def __init__(
+        self,
+        config: TargetDetectorConfig,
+        horizontal_fov_deg: float
+    ):
         """
         Initialize target detector.
 

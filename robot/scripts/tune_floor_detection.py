@@ -151,9 +151,9 @@ class FloorDetectionTuner:
         self._show_histogram = False  # Toggle for View 3: camera (default) vs histogram
         self._filtering_enabled = True  # Temporal persistence filter toggle
 
-        # Temporal filtering state (N-frame persistence filter)
+        # Temporal filtering state (N-frame persistence filter on raw depth)
         self._persistence_frames = 2  # Number of frames required for persistence
-        self._distance_history: list = []  # List of recent distance arrays
+        self._depth_history: list = []  # List of recent depth maps
 
         # Trackbar values (scaled for integer trackbars)
         self._trackbar_values = {
@@ -382,31 +382,31 @@ class FloorDetectionTuner:
 
         return result
 
-    def _apply_persistence_filter(self, distances: np.ndarray) -> np.ndarray:
+    def _apply_depth_filter(self, depth_map: np.ndarray) -> np.ndarray:
         """
-        Apply N-frame persistence filter to reject transient noise.
+        Apply N-frame persistence filter to raw depth map.
 
-        For each sector, outputs the maximum (farthest) distance seen
+        For each pixel, outputs the maximum (farthest) depth seen
         in the last N frames. This rejects transient "close" noise spikes
         while being conservative (farther = safer for navigation).
 
         Args:
-            distances: Current frame 1D distance array
+            depth_map: Current frame 2D depth map in mm
 
         Returns:
-            Filtered distance array with max distance per sector over N frames
+            Filtered depth map with max depth per pixel over N frames
         """
-        self._distance_history.append(distances.copy())
-        if len(self._distance_history) > self._persistence_frames:
-            self._distance_history.pop(0)
+        self._depth_history.append(depth_map.copy())
+        if len(self._depth_history) > self._persistence_frames:
+            self._depth_history.pop(0)
 
         # Stack and take max across frames (safest/farthest reading)
-        stacked = np.stack(self._distance_history, axis=0)
+        stacked = np.stack(self._depth_history, axis=0)
         return np.max(stacked, axis=0)
 
     def _reset_filter_state(self) -> None:
         """Reset the temporal filter history."""
-        self._distance_history = []
+        self._depth_history = []
 
     def run(self) -> None:
         """Main loop with live preview."""
@@ -450,6 +450,12 @@ class FloorDetectionTuner:
             # Handle NaN/inf values
             depth_map = np.nan_to_num(depth_map, nan=0.0, posinf=0.0, neginf=0.0)
 
+            # Apply temporal persistence filter on raw depth if enabled
+            if self._filtering_enabled:
+                depth_map = self._apply_depth_filter(depth_map)
+            else:
+                self._reset_filter_state()
+
             # Process with current settings
             result = self._preprocessor.process(depth_map)
 
@@ -461,15 +467,8 @@ class FloorDetectionTuner:
                 max_range_mm=self._config.max_range_mm
             )
 
-            # Apply temporal persistence filter if enabled
-            if self._filtering_enabled:
-                display_distances = self._apply_persistence_filter(result.distances)
-            else:
-                display_distances = result.distances
-                self._reset_filter_state()  # Reset filter state when disabled
-
             lidar_viz = self._visualizer.draw_virtual_lidar(
-                display_distances,
+                result.distances,
                 result.sector_angles,
                 result.valid_sectors,
                 max_range_mm=self._config.max_range_mm

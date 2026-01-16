@@ -42,14 +42,14 @@ class FloorDetectionTuner:
     Windows:
     - "Depth + Masks": Raw depth with floor (blue) and obstacles (red) overlay
     - "Virtual LIDAR": Polar plot of 1D distance output
-    - "Height Histogram": Distribution of pixel heights with threshold lines
+    - "View 3": Raw camera with obstacle outlines (default) or height histogram (press H)
     - "Parameters": Trackbars for parameter adjustment
 
     Keys:
     - 's': Save current params to YAML
     - 'l': Load params from YAML
     - 'm': Switch floor detection method (height/adaptive)
-    - 'c': Cycle colormap
+    - 'h': Toggle between raw camera and height histogram
     - 'q': Quit
     """
 
@@ -88,6 +88,7 @@ class FloorDetectionTuner:
 
         # State
         self._running = False
+        self._show_histogram = False  # Toggle for View 3: camera (default) vs histogram
 
         # Trackbar values (scaled for integer trackbars)
         self._trackbar_values = {
@@ -268,12 +269,49 @@ class FloorDetectionTuner:
         self._update_preprocessor()
         print(f"Loaded config from {filepath}")
 
+    def _render_camera_with_obstacles(
+        self,
+        frame: np.ndarray,
+        obstacle_mask: np.ndarray
+    ) -> np.ndarray:
+        """
+        Render raw camera view with red obstacle outlines.
+
+        Args:
+            frame: Left rectified camera frame (BGR)
+            obstacle_mask: Boolean mask where True = obstacle
+
+        Returns:
+            BGR image with red obstacle outlines overlaid
+        """
+        result = frame.copy()
+
+        # Resize mask if dimensions don't match
+        if obstacle_mask.shape[:2] != frame.shape[:2]:
+            obstacle_mask = cv2.resize(
+                obstacle_mask.astype(np.uint8),
+                (frame.shape[1], frame.shape[0]),
+                interpolation=cv2.INTER_NEAREST
+            ).astype(bool)
+
+        # Get obstacle edges (outline only, not filled)
+        mask_uint8 = obstacle_mask.astype(np.uint8) * 255
+        kernel = np.ones((3, 3), np.uint8)
+        dilated = cv2.dilate(mask_uint8, kernel, iterations=1)
+        eroded = cv2.erode(mask_uint8, kernel, iterations=1)
+        edges = (dilated - eroded) > 0
+
+        # Draw red outlines
+        result[edges] = (0, 0, 255)  # BGR red
+
+        return result
+
     def run(self) -> None:
         """Main loop with live preview."""
         # Create windows
         cv2.namedWindow('Depth + Masks', cv2.WINDOW_NORMAL)
         cv2.namedWindow('Virtual LIDAR', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('Height Histogram', cv2.WINDOW_NORMAL)
+        cv2.namedWindow('View 3', cv2.WINDOW_NORMAL)
 
         self._create_trackbars()
 
@@ -282,6 +320,7 @@ class FloorDetectionTuner:
         print("  s - Save parameters to YAML")
         print("  l - Load parameters from YAML")
         print("  m - Switch floor detection method (height/adaptive)")
+        print("  h - Toggle View 3: raw camera / height histogram")
         print("  q - Quit")
         print()
 
@@ -298,8 +337,8 @@ class FloorDetectionTuner:
             if not success:
                 continue
 
-            # Compute depth
-            _, _, disparity = self._matcher.process_frame(left, right)
+            # Compute depth (also get left rectified for camera view)
+            left_rect, _, disparity = self._matcher.process_frame(left, right)
             depth_map = self._matcher.disparity_to_depth(disparity)
 
             # Handle NaN/inf values
@@ -307,9 +346,6 @@ class FloorDetectionTuner:
 
             # Process with current settings
             result = self._preprocessor.process(depth_map)
-
-            # Compute heights for histogram
-            heights = self._preprocessor.compute_heights(depth_map)
 
             # Visualize
             depth_viz = self._visualizer.draw_depth_with_masks(
@@ -326,11 +362,16 @@ class FloorDetectionTuner:
                 max_range_mm=self._config.max_range_mm
             )
 
-            histogram_viz = self._visualizer.draw_height_histogram(
-                heights,
-                self._trackbar_values['floor_threshold_mm'],
-                self._trackbar_values['robot_height_mm']
-            )
+            # View 3: Raw camera with obstacles (default) or height histogram
+            if self._show_histogram:
+                heights = self._preprocessor.compute_heights(depth_map)
+                view3_viz = self._visualizer.draw_height_histogram(
+                    heights,
+                    self._trackbar_values['floor_threshold_mm'],
+                    self._trackbar_values['robot_height_mm']
+                )
+            else:
+                view3_viz = self._render_camera_with_obstacles(left_rect, result.obstacle_mask)
 
             # Add info overlay to depth viz
             info_text = f"FPS: {fps:.1f} | Method: {self._current_method.upper()}"
@@ -341,7 +382,7 @@ class FloorDetectionTuner:
             # Show windows
             cv2.imshow('Depth + Masks', depth_viz)
             cv2.imshow('Virtual LIDAR', lidar_viz)
-            cv2.imshow('Height Histogram', histogram_viz)
+            cv2.imshow('View 3', view3_viz)
 
             # Handle input
             key = cv2.waitKey(1) & 0xFF
@@ -354,6 +395,10 @@ class FloorDetectionTuner:
                 self._load_config()
             elif key == ord('m'):
                 self._switch_method()
+            elif key == ord('h'):
+                self._show_histogram = not self._show_histogram
+                view_name = "Height Histogram" if self._show_histogram else "Raw Camera"
+                print(f"View 3: {view_name}")
 
             # Update FPS
             frame_time = time.time() - start_time

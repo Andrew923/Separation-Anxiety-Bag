@@ -151,8 +151,9 @@ class FloorDetectionTuner:
         self._show_histogram = False  # Toggle for View 3: camera (default) vs histogram
         self._filtering_enabled = True  # Temporal persistence filter toggle
 
-        # Temporal filtering state (2-frame persistence filter)
-        self._prev_distances: Optional[np.ndarray] = None
+        # Temporal filtering state (N-frame persistence filter)
+        self._persistence_frames = 2  # Number of frames required for persistence
+        self._distance_history: list = []  # List of recent distance arrays
 
         # Trackbar values (scaled for integer trackbars)
         self._trackbar_values = {
@@ -383,11 +384,11 @@ class FloorDetectionTuner:
 
     def _apply_persistence_filter(self, distances: np.ndarray) -> np.ndarray:
         """
-        Apply 2-frame persistence filter to reject single-frame noise.
+        Apply N-frame persistence filter to reject transient noise.
 
         A sector's distance only decreases (obstacle appears closer) if
-        the obstacle was also detected in the previous frame. Increases
-        (obstacle moves away) are applied immediately for safety.
+        the obstacle was detected as close for N consecutive frames.
+        Increases (obstacle moves away) are applied immediately for safety.
 
         Args:
             distances: Current frame 1D distance array
@@ -395,28 +396,48 @@ class FloorDetectionTuner:
         Returns:
             Filtered distance array
         """
-        if self._prev_distances is None:
-            # First frame - no filtering possible
-            self._prev_distances = distances.copy()
+        # Add current frame to history
+        self._distance_history.append(distances.copy())
+
+        # Keep only the frames we need
+        max_history = self._persistence_frames
+        if len(self._distance_history) > max_history:
+            self._distance_history.pop(0)
+
+        # Not enough history yet - return current distances
+        if len(self._distance_history) < self._persistence_frames:
             return distances
 
         filtered = distances.copy()
 
-        # For each sector, only accept "closer" readings if previous frame
-        # also showed something close (within threshold)
+        # For each sector, only accept "closer" readings if all recent frames
+        # also showed something close
         for i in range(len(distances)):
             curr = distances[i]
-            prev = self._prev_distances[i]
 
-            # If current reading is much closer than previous, check if it's noise
-            # Noise = sudden appearance that wasn't there before
-            # We accept if: obstacle moving away, OR obstacle was already close
-            if curr < prev * 0.7:  # Current is >30% closer than previous
-                # Likely noise - keep the previous (farther) value
-                filtered[i] = prev
+            # Get the oldest frame in our window for comparison
+            oldest = self._distance_history[0][i]
 
-        self._prev_distances = distances.copy()
+            # If current reading is much closer than the oldest in window,
+            # check if ALL intermediate frames also showed it close
+            if curr < oldest * 0.7:  # Current is >30% closer
+                # Check if obstacle was consistently close across all frames
+                all_close = True
+                for frame_idx in range(len(self._distance_history) - 1):
+                    hist_val = self._distance_history[frame_idx][i]
+                    if hist_val > oldest * 0.85:  # Not consistently close
+                        all_close = False
+                        break
+
+                if not all_close:
+                    # Transient noise - use the max (safest/farthest) from history
+                    filtered[i] = max(h[i] for h in self._distance_history)
+
         return filtered
+
+    def _reset_filter_state(self) -> None:
+        """Reset the temporal filter history."""
+        self._distance_history = []
 
     def run(self) -> None:
         """Main loop with live preview."""
@@ -433,10 +454,11 @@ class FloorDetectionTuner:
         print("  l - Load parameters from YAML")
         print("  m - Switch floor detection method (height/adaptive)")
         print("  h - Toggle View 3: raw camera / height histogram")
-        print("  f - Toggle temporal persistence filter (2-frame)")
+        print("  f - Toggle temporal persistence filter")
+        print("  [ / ] - Decrease / increase persistence frames (1-10)")
         print("  q - Quit")
         print()
-        print(f"Temporal filter: {'ON' if self._filtering_enabled else 'OFF'}")
+        print(f"Temporal filter: {'ON' if self._filtering_enabled else 'OFF'} ({self._persistence_frames} frames)")
         print()
 
         # FPS tracking
@@ -475,7 +497,7 @@ class FloorDetectionTuner:
                 display_distances = self._apply_persistence_filter(result.distances)
             else:
                 display_distances = result.distances
-                self._prev_distances = None  # Reset filter state when disabled
+                self._reset_filter_state()  # Reset filter state when disabled
 
             lidar_viz = self._visualizer.draw_virtual_lidar(
                 display_distances,
@@ -496,7 +518,7 @@ class FloorDetectionTuner:
                 view3_viz = self._render_camera_with_obstacles(left_rect, result.obstacle_mask)
 
             # Add info overlay to depth viz
-            filter_status = "FILT" if self._filtering_enabled else "RAW"
+            filter_status = f"FILT({self._persistence_frames})" if self._filtering_enabled else "RAW"
             info_text = f"FPS: {fps:.1f} | Method: {self._current_method.upper()} | {filter_status}"
             cv2.rectangle(depth_viz, (0, 0), (400, 25), (40, 40, 40), -1)
             cv2.putText(depth_viz, info_text, (10, 18),
@@ -524,8 +546,19 @@ class FloorDetectionTuner:
                 print(f"View 3: {view_name}")
             elif key == ord('f'):
                 self._filtering_enabled = not self._filtering_enabled
-                self._prev_distances = None  # Reset filter state
-                print(f"Temporal filter: {'ON' if self._filtering_enabled else 'OFF'}")
+                self._reset_filter_state()
+                status = f"ON ({self._persistence_frames} frames)" if self._filtering_enabled else "OFF"
+                print(f"Temporal filter: {status}")
+            elif key == ord('['):
+                if self._persistence_frames > 1:
+                    self._persistence_frames -= 1
+                    self._reset_filter_state()
+                    print(f"Persistence frames: {self._persistence_frames}")
+            elif key == ord(']'):
+                if self._persistence_frames < 10:
+                    self._persistence_frames += 1
+                    self._reset_filter_state()
+                    print(f"Persistence frames: {self._persistence_frames}")
 
             # Update FPS
             frame_time = time.time() - start_time

@@ -149,6 +149,10 @@ class FloorDetectionTuner:
         # State
         self._running = False
         self._show_histogram = False  # Toggle for View 3: camera (default) vs histogram
+        self._filtering_enabled = True  # Temporal persistence filter toggle
+
+        # Temporal filtering state (2-frame persistence filter)
+        self._prev_distances: Optional[np.ndarray] = None
 
         # Trackbar values (scaled for integer trackbars)
         self._trackbar_values = {
@@ -377,6 +381,43 @@ class FloorDetectionTuner:
 
         return result
 
+    def _apply_persistence_filter(self, distances: np.ndarray) -> np.ndarray:
+        """
+        Apply 2-frame persistence filter to reject single-frame noise.
+
+        A sector's distance only decreases (obstacle appears closer) if
+        the obstacle was also detected in the previous frame. Increases
+        (obstacle moves away) are applied immediately for safety.
+
+        Args:
+            distances: Current frame 1D distance array
+
+        Returns:
+            Filtered distance array
+        """
+        if self._prev_distances is None:
+            # First frame - no filtering possible
+            self._prev_distances = distances.copy()
+            return distances
+
+        filtered = distances.copy()
+
+        # For each sector, only accept "closer" readings if previous frame
+        # also showed something close (within threshold)
+        for i in range(len(distances)):
+            curr = distances[i]
+            prev = self._prev_distances[i]
+
+            # If current reading is much closer than previous, check if it's noise
+            # Noise = sudden appearance that wasn't there before
+            # We accept if: obstacle moving away, OR obstacle was already close
+            if curr < prev * 0.7:  # Current is >30% closer than previous
+                # Likely noise - keep the previous (farther) value
+                filtered[i] = prev
+
+        self._prev_distances = distances.copy()
+        return filtered
+
     def run(self) -> None:
         """Main loop with live preview."""
         # Create windows
@@ -392,7 +433,10 @@ class FloorDetectionTuner:
         print("  l - Load parameters from YAML")
         print("  m - Switch floor detection method (height/adaptive)")
         print("  h - Toggle View 3: raw camera / height histogram")
+        print("  f - Toggle temporal persistence filter (2-frame)")
         print("  q - Quit")
+        print()
+        print(f"Temporal filter: {'ON' if self._filtering_enabled else 'OFF'}")
         print()
 
         # FPS tracking
@@ -426,8 +470,15 @@ class FloorDetectionTuner:
                 max_range_mm=self._config.max_range_mm
             )
 
+            # Apply temporal persistence filter if enabled
+            if self._filtering_enabled:
+                display_distances = self._apply_persistence_filter(result.distances)
+            else:
+                display_distances = result.distances
+                self._prev_distances = None  # Reset filter state when disabled
+
             lidar_viz = self._visualizer.draw_virtual_lidar(
-                result.distances,
+                display_distances,
                 result.sector_angles,
                 result.valid_sectors,
                 max_range_mm=self._config.max_range_mm
@@ -445,8 +496,9 @@ class FloorDetectionTuner:
                 view3_viz = self._render_camera_with_obstacles(left_rect, result.obstacle_mask)
 
             # Add info overlay to depth viz
-            info_text = f"FPS: {fps:.1f} | Method: {self._current_method.upper()}"
-            cv2.rectangle(depth_viz, (0, 0), (350, 25), (40, 40, 40), -1)
+            filter_status = "FILT" if self._filtering_enabled else "RAW"
+            info_text = f"FPS: {fps:.1f} | Method: {self._current_method.upper()} | {filter_status}"
+            cv2.rectangle(depth_viz, (0, 0), (400, 25), (40, 40, 40), -1)
             cv2.putText(depth_viz, info_text, (10, 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
@@ -470,6 +522,10 @@ class FloorDetectionTuner:
                 self._show_histogram = not self._show_histogram
                 view_name = "Height Histogram" if self._show_histogram else "Raw Camera"
                 print(f"View 3: {view_name}")
+            elif key == ord('f'):
+                self._filtering_enabled = not self._filtering_enabled
+                self._prev_distances = None  # Reset filter state
+                print(f"Temporal filter: {'ON' if self._filtering_enabled else 'OFF'}")
 
             # Update FPS
             frame_time = time.time() - start_time

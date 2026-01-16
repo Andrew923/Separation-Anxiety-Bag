@@ -386,54 +386,23 @@ class FloorDetectionTuner:
         """
         Apply N-frame persistence filter to reject transient noise.
 
-        A sector's distance only decreases (obstacle appears closer) if
-        the obstacle was detected as close for N consecutive frames.
-        Increases (obstacle moves away) are applied immediately for safety.
+        For each sector, outputs the maximum (farthest) distance seen
+        in the last N frames. This rejects transient "close" noise spikes
+        while being conservative (farther = safer for navigation).
 
         Args:
             distances: Current frame 1D distance array
 
         Returns:
-            Filtered distance array
+            Filtered distance array with max distance per sector over N frames
         """
-        # Add current frame to history
         self._distance_history.append(distances.copy())
-
-        # Keep only the frames we need
-        max_history = self._persistence_frames
-        if len(self._distance_history) > max_history:
+        if len(self._distance_history) > self._persistence_frames:
             self._distance_history.pop(0)
 
-        # Not enough history yet - return current distances
-        if len(self._distance_history) < self._persistence_frames:
-            return distances
-
-        filtered = distances.copy()
-
-        # For each sector, only accept "closer" readings if all recent frames
-        # also showed something close
-        for i in range(len(distances)):
-            curr = distances[i]
-
-            # Get the oldest frame in our window for comparison
-            oldest = self._distance_history[0][i]
-
-            # If current reading is much closer than the oldest in window,
-            # check if ALL intermediate frames also showed it close
-            if curr < oldest * 0.7:  # Current is >30% closer
-                # Check if obstacle was consistently close across all frames
-                all_close = True
-                for frame_idx in range(len(self._distance_history) - 1):
-                    hist_val = self._distance_history[frame_idx][i]
-                    if hist_val > oldest * 0.85:  # Not consistently close
-                        all_close = False
-                        break
-
-                if not all_close:
-                    # Transient noise - use the max (safest/farthest) from history
-                    filtered[i] = max(h[i] for h in self._distance_history)
-
-        return filtered
+        # Stack and take max across frames (safest/farthest reading)
+        stacked = np.stack(self._distance_history, axis=0)
+        return np.max(stacked, axis=0)
 
     def _reset_filter_state(self) -> None:
         """Reset the temporal filter history."""

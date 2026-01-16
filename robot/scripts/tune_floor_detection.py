@@ -4,6 +4,66 @@ Live GUI for tuning depth preprocessing floor detection parameters.
 
 Provides real-time visualization and parameter adjustment using OpenCV trackbars.
 Uses robot_config.yaml as the single source of truth for stereo/WLS configuration.
+
+=== PARAMETER REFERENCE ===
+
+RANGE FILTERING:
+    Min Range (cm)      Minimum distance to consider valid. Anything closer is
+                        ignored (helps filter noise near the camera). Typical: 20-30cm
+
+    Max Range (cm)      Maximum distance to consider. Anything farther is ignored
+                        (out of reliable stereo range). Typical: 200-400cm
+
+HEIGHT-BASED FLOOR DETECTION (default method):
+    Works by computing the height of each pixel relative to the floor plane
+    using camera geometry. Valid obstacles = pixels between floor and robot height.
+
+    Floor Threshold (mm)    Pixels with height BELOW this value are considered floor
+                            and ignored. Relative to computed floor plane.
+                            Example: 50mm = anything within 5cm of floor is filtered.
+
+    Robot Height (mm)       Pixels with height ABOVE this value are considered
+                            ceiling/overhead and ignored.
+                            Example: 500mm = anything 50cm+ above floor is filtered.
+
+    Visual representation:
+        Ceiling (ignored)     | above robot_height_mm
+        ----------------------+
+        Obstacles (detected)  | valid range
+        ----------------------+
+        Floor (ignored)       | below floor_threshold_mm
+
+ADAPTIVE FLOOR DETECTION (press 'M' to switch):
+    Alternative method where floor threshold varies based on distance from camera.
+    Helps account for stereo depth noise increasing with distance.
+
+    Base Threshold (mm)     Floor threshold at zero distance
+
+    Depth Scaling x100      How much threshold increases per mm of depth.
+                            Value of 2 = 0.02, meaning threshold grows 20mm per 1000mm.
+                            Formula: threshold = base + (depth * scaling_factor)
+
+    Robot Height (mm)       Same as above - ceiling cutoff
+
+OUTPUT CONFIGURATION:
+    Num Sectors             Number of angular sectors in virtual LIDAR output.
+                            More sectors = finer angular resolution but more processing.
+                            Typical: 36-72
+
+CAMERA GEOMETRY (CLI arguments, not trackbars):
+    --camera-height         Height of camera above floor in mm. Critical for height
+                            calculations - measure this accurately!
+
+    --camera-tilt           Downward tilt angle in degrees. Positive = looking down.
+                            Use 0 if camera is level.
+
+=== TUNING TIPS ===
+
+1. Start with camera geometry - measure actual --camera-height before running
+2. Adjust Floor Threshold - increase until floor pixels turn blue in "Depth + Masks"
+3. Check raw camera view (View 3) - red outlines should only be on real obstacles
+4. Verify Virtual LIDAR - no false close-range points from floor
+5. Press 'S' to save when happy - saves to robot/config/floor_detection_params.yaml
 """
 
 import sys
@@ -105,7 +165,9 @@ class FloorDetectionTuner:
         """Create all parameter trackbars."""
         cv2.namedWindow('Parameters', cv2.WINDOW_NORMAL)
 
-        # Range filtering
+        # --- Range filtering ---
+        # Min/max distance to consider valid depth readings
+
         cv2.createTrackbar(
             'Min Range (cm)', 'Parameters',
             self._trackbar_values['min_range_cm'], 50,
@@ -117,7 +179,11 @@ class FloorDetectionTuner:
             lambda v: self._on_trackbar_change('max_range_cm', v)
         )
 
-        # Height thresholds
+        # --- Height-based floor detection ---
+        # Floor Threshold: heights BELOW this are floor (ignored)
+        # Robot Height: heights ABOVE this are ceiling (ignored)
+        # Valid obstacles are between these two thresholds
+
         cv2.createTrackbar(
             'Floor Threshold (mm)', 'Parameters',
             self._trackbar_values['floor_threshold_mm'], 200,
@@ -129,14 +195,19 @@ class FloorDetectionTuner:
             lambda v: self._on_trackbar_change('robot_height_mm', v)
         )
 
-        # Output
+        # --- Output configuration ---
+        # Number of angular sectors in 1D virtual LIDAR output
+
         cv2.createTrackbar(
             'Num Sectors', 'Parameters',
             self._trackbar_values['num_sectors'], 180,
             lambda v: self._on_trackbar_change('num_sectors', max(18, v))
         )
 
-        # Adaptive floor detection (used when method == "adaptive")
+        # --- Adaptive floor detection (press 'M' to enable) ---
+        # threshold = base_threshold + (depth * depth_scaling_factor)
+        # Accounts for stereo noise increasing with distance
+
         cv2.createTrackbar(
             'Base Threshold (mm)', 'Parameters',
             self._trackbar_values['base_threshold_mm'], 200,

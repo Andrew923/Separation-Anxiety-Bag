@@ -311,3 +311,282 @@ class DepthPreprocessorVisualizer:
         x = int(center[0] + radius * math.sin(angle_rad))
         y = int(center[1] - radius * math.cos(angle_rad))
         return (x, y)
+
+    def draw_virtual_lidar_with_heading(
+        self,
+        distances: np.ndarray,
+        sector_angles: np.ndarray,
+        valid_sectors: Optional[np.ndarray] = None,
+        selected_heading_deg: Optional[float] = None,
+        target_heading_deg: Optional[float] = None,
+        safety_distance_mm: Optional[float] = None,
+        max_range_mm: Optional[float] = None,
+        can_proceed: bool = True
+    ) -> np.ndarray:
+        """
+        Draw 1D distance array as polar plot with heading overlays.
+
+        Args:
+            distances: Min distance per sector in mm
+            sector_angles: Center angle of each sector in degrees
+            valid_sectors: Boolean mask of sectors with valid data
+            selected_heading_deg: Best heading from path planner (green arrow)
+            target_heading_deg: Target direction (cyan arrow)
+            safety_distance_mm: Safety threshold to display as circle
+            max_range_mm: Max range for scaling
+            can_proceed: Whether path is clear (affects title color)
+
+        Returns:
+            BGR image of polar plot with overlays
+        """
+        # Start with base virtual LIDAR
+        img = self.draw_virtual_lidar(
+            distances, sector_angles, valid_sectors, max_range_mm, show_grid=True
+        )
+
+        size = self._config.polar_size
+        center = (size // 2, size // 2)
+        max_radius = int(size * 0.45)
+        max_range = max_range_mm or self._config.max_range_mm
+
+        # Draw safety distance circle if specified
+        if safety_distance_mm is not None and safety_distance_mm < max_range:
+            safety_radius = int(max_radius * (safety_distance_mm / max_range))
+            cv2.circle(img, center, safety_radius, (0, 100, 255), 1, cv2.LINE_AA)
+
+        # Draw target heading (cyan dashed line)
+        if target_heading_deg is not None:
+            x, y = self._angle_to_point(target_heading_deg, max_radius, center)
+            # Draw as dotted/dashed by drawing shorter segments
+            self._draw_dashed_line(img, center, (x, y), (255, 255, 0), 1, 8)
+            # Small arrowhead
+            self._draw_arrowhead(img, center, (x, y), (255, 255, 0), 8)
+
+        # Draw selected heading (green solid arrow) if different from target
+        if selected_heading_deg is not None:
+            arrow_color = (0, 255, 0) if can_proceed else (0, 100, 255)
+            arrow_len = int(max_radius * 0.7)
+            x, y = self._angle_to_point(selected_heading_deg, arrow_len, center)
+            cv2.arrowedLine(img, center, (x, y), arrow_color, 2, cv2.LINE_AA, tipLength=0.2)
+
+        # Status indicator
+        status_color = (0, 255, 0) if can_proceed else (0, 0, 255)
+        status_text = "CLEAR" if can_proceed else "BLOCKED"
+        cv2.putText(img, status_text, (size - 70, size - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, status_color, 1, cv2.LINE_AA)
+
+        return img
+
+    def draw_planner_debug_panel(
+        self,
+        planner_result: Optional[object],
+        algorithm: str,
+        target_angle_deg: Optional[float] = None,
+        target_range_mm: Optional[float] = None,
+        panel_size: Tuple[int, int] = (320, 240)
+    ) -> np.ndarray:
+        """
+        Draw debug info panel showing planner state and reason for can_proceed.
+
+        Args:
+            planner_result: PlannerResult from path planner
+            algorithm: Algorithm name ("follow_gap" or "apf")
+            target_angle_deg: Current target angle
+            target_range_mm: Current target range
+            panel_size: (width, height) of panel
+
+        Returns:
+            BGR image with debug info
+        """
+        width, height = panel_size
+        panel = np.zeros((height, width, 3), dtype=np.uint8)
+        y = 20
+        line_height = 20
+
+        # Title
+        cv2.putText(panel, f"Planner: {algorithm.upper()}", (10, y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        y += line_height + 5
+
+        if planner_result is None:
+            cv2.putText(panel, "No planner result", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 100), 1, cv2.LINE_AA)
+            return panel
+
+        # Access attributes safely (duck typing for PlannerResult)
+        can_proceed = getattr(planner_result, 'can_proceed', None)
+        best_heading = getattr(planner_result, 'best_heading_deg', None)
+        debug_info = getattr(planner_result, 'debug_info', {}) or {}
+
+        # Can proceed status (prominent)
+        if can_proceed is not None:
+            status_color = (0, 255, 0) if can_proceed else (0, 0, 255)
+            status_text = "CAN PROCEED: YES" if can_proceed else "CAN PROCEED: NO"
+            cv2.putText(panel, status_text, (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1, cv2.LINE_AA)
+            y += line_height
+
+        # Reason (when blocked)
+        reason = debug_info.get('reason', '')
+        if reason:
+            reason_text = f"Reason: {reason.replace('_', ' ')}"
+            cv2.putText(panel, reason_text, (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 150, 255), 1, cv2.LINE_AA)
+            y += line_height
+
+        # Selected heading
+        if best_heading is not None:
+            cv2.putText(panel, f"Heading: {best_heading:+.1f} deg", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
+            y += line_height
+
+        # Target info
+        if target_angle_deg is not None:
+            cv2.putText(panel, f"Target: {target_angle_deg:+.1f} deg", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 100), 1, cv2.LINE_AA)
+            y += line_height
+
+        y += 5  # Small gap before algorithm-specific info
+
+        # Algorithm-specific debug info
+        if algorithm == 'follow_gap':
+            self._draw_follow_gap_debug(panel, debug_info, y, line_height)
+        elif algorithm == 'apf':
+            self._draw_apf_debug(panel, debug_info, y, line_height)
+
+        return panel
+
+    def _draw_follow_gap_debug(
+        self,
+        panel: np.ndarray,
+        debug_info: dict,
+        y: int,
+        line_height: int
+    ) -> None:
+        """Draw Follow-the-Gap specific debug info."""
+        gaps_found = debug_info.get('gaps_found', '?')
+        passable_gaps = debug_info.get('passable_gaps', '?')
+
+        cv2.putText(panel, f"Gaps found: {gaps_found}", (10, y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+        y += line_height
+
+        color = (0, 255, 0) if passable_gaps and passable_gaps > 0 else (100, 100, 255)
+        cv2.putText(panel, f"Passable gaps: {passable_gaps}", (10, y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+        y += line_height
+
+        # Selected gap details
+        gap_width = debug_info.get('selected_gap_width_deg')
+        gap_depth = debug_info.get('selected_gap_depth_mm')
+        if gap_width is not None:
+            cv2.putText(panel, f"Gap width: {gap_width:.1f} deg", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 200, 150), 1, cv2.LINE_AA)
+            y += line_height
+        if gap_depth is not None:
+            cv2.putText(panel, f"Gap depth: {gap_depth:.0f} mm", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 200, 150), 1, cv2.LINE_AA)
+
+    def _draw_apf_debug(
+        self,
+        panel: np.ndarray,
+        debug_info: dict,
+        y: int,
+        line_height: int
+    ) -> None:
+        """Draw APF specific debug info."""
+        min_dist = debug_info.get('min_distance_mm')
+        if min_dist is not None:
+            color = (0, 255, 0) if min_dist > 200 else (0, 100, 255)
+            cv2.putText(panel, f"Min distance: {min_dist:.0f} mm", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+            y += line_height
+
+        # Force magnitudes
+        f_att = debug_info.get('f_attractive')
+        f_rep = debug_info.get('f_repulsive')
+        f_total = debug_info.get('f_total')
+        magnitude = debug_info.get('resultant_magnitude')
+
+        if f_att is not None:
+            cv2.putText(panel, f"F_attract: ({f_att[0]:.2f}, {f_att[1]:.2f})", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 255, 100), 1, cv2.LINE_AA)
+            y += line_height
+
+        if f_rep is not None:
+            cv2.putText(panel, f"F_repel: ({f_rep[0]:.2f}, {f_rep[1]:.2f})", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 255), 1, cv2.LINE_AA)
+            y += line_height
+
+        if magnitude is not None:
+            cv2.putText(panel, f"Resultant: {magnitude:.3f}", (10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1, cv2.LINE_AA)
+
+        # Emergency stop indicator
+        if debug_info.get('emergency_stop'):
+            cv2.putText(panel, "EMERGENCY STOP", (10, panel.shape[0] - 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
+        elif debug_info.get('local_minimum'):
+            cv2.putText(panel, "LOCAL MINIMUM", (10, panel.shape[0] - 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 150, 255), 1, cv2.LINE_AA)
+
+    def _draw_dashed_line(
+        self,
+        img: np.ndarray,
+        pt1: Tuple[int, int],
+        pt2: Tuple[int, int],
+        color: Tuple[int, int, int],
+        thickness: int = 1,
+        dash_length: int = 5
+    ) -> None:
+        """Draw a dashed line between two points."""
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+        if dist < 1:
+            return
+
+        num_dashes = int(dist / (dash_length * 2))
+        for i in range(num_dashes):
+            t1 = (i * 2 * dash_length) / dist
+            t2 = ((i * 2 + 1) * dash_length) / dist
+            t2 = min(t2, 1.0)
+
+            x1 = int(pt1[0] + dx * t1)
+            y1 = int(pt1[1] + dy * t1)
+            x2 = int(pt1[0] + dx * t2)
+            y2 = int(pt1[1] + dy * t2)
+
+            cv2.line(img, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
+
+    def _draw_arrowhead(
+        self,
+        img: np.ndarray,
+        pt1: Tuple[int, int],
+        pt2: Tuple[int, int],
+        color: Tuple[int, int, int],
+        size: int = 10
+    ) -> None:
+        """Draw arrowhead at pt2 pointing from pt1."""
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+        if dist < 1:
+            return
+
+        # Normalize
+        dx /= dist
+        dy /= dist
+
+        # Perpendicular
+        px = -dy
+        py = dx
+
+        # Arrowhead points
+        p1 = (int(pt2[0] - size * dx + size * 0.5 * px),
+              int(pt2[1] - size * dy + size * 0.5 * py))
+        p2 = (int(pt2[0] - size * dx - size * 0.5 * px),
+              int(pt2[1] - size * dy - size * 0.5 * py))
+
+        cv2.line(img, pt2, p1, color, 1, cv2.LINE_AA)
+        cv2.line(img, pt2, p2, color, 1, cv2.LINE_AA)

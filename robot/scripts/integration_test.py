@@ -38,6 +38,10 @@ from robot.src.tracking_camera import TrackingCamera, TrackingCameraConfig
 from robot.src.navigation import (
     NavigationController, NavigationConfig, NavigationState, NavigationCommand
 )
+from robot.src.depth_preprocessor import PreprocessorResult
+from robot.src.visualizers.depth_preprocessor_viz import (
+    DepthPreprocessorVisualizer, DepthVisualizerConfig
+)
 
 from vision.src.camera import StereoCamera
 from vision.src.stereo_matcher import StereoMatcher, SGBMParams, WLSParams
@@ -56,6 +60,7 @@ class IntegrationConfig:
     config_path: Optional[str] = None
     algorithm: str = "follow_gap"  # "follow_gap" or "apf"
     target_fps: float = 20.0
+    debug_view: bool = False  # Show debug visualization instead of camera feed
 
 
 class IntegrationTester:
@@ -102,13 +107,18 @@ class IntegrationTester:
         # State
         self._colormap_index = 0
         self._show_epipolar = False
+        self._debug_view = config.debug_view  # Toggle for debug visualization
         self._fps = 0.0
         self._frame_times: List[float] = []
+
+        # Visualizers
+        self._depth_viz: Optional[DepthPreprocessorVisualizer] = None
 
         # Latest data
         self._latest_ranges: Tuple[Optional[float], Optional[float]] = (None, None)
         self._latest_triangulation: Optional[TriangulationResult] = None
         self._latest_planner_result: Optional[PlannerResult] = None
+        self._latest_preproc_result: Optional[PreprocessorResult] = None
         self._latest_nav_cmd: Optional[NavigationCommand] = None
         self._latest_target_detection: Optional[TargetDetection] = None
         self._latest_target_state: Optional[TargetState] = None
@@ -421,11 +431,18 @@ class IntegrationTester:
     def run(self) -> None:
         """Main integration test loop."""
         print("\nStarting integration test...")
-        print("Controls: Q=quit, E=toggle epipolar lines, C=cycle colormap")
+        print("Controls: Q=quit, E=epipolar, C=colormap, D=debug view")
+        print(f"Debug view: {'ON' if self._debug_view else 'OFF'}")
         print("")
 
         self._running = True
         loop_period = 1.0 / self._config.target_fps
+
+        # Initialize depth visualizer for debug view
+        self._depth_viz = DepthPreprocessorVisualizer(DepthVisualizerConfig(
+            polar_size=240,  # Match panel size
+            max_range_mm=3000.0
+        ))
 
         cv2.namedWindow("Integration Test", cv2.WINDOW_AUTOSIZE)
 
@@ -587,6 +604,7 @@ class IntegrationTester:
         if self._depth_preprocessor is not None and self._path_planner is not None and self._latest_depth is not None:
             # Preprocess depth to 1D distances
             preproc_result = self._depth_preprocessor.process(self._latest_depth)
+            self._latest_preproc_result = preproc_result  # Store for debug visualization
 
             # Compute path
             self._latest_planner_result = self._path_planner.compute(
@@ -595,6 +613,7 @@ class IntegrationTester:
                 target_angle if target_angle is not None else 0.0
             )
         else:
+            self._latest_preproc_result = None
             # Fallback - proceed toward target
             self._latest_planner_result = PlannerResult(
                 best_heading_deg=target_angle if target_angle else 0.0,
@@ -638,14 +657,14 @@ class IntegrationTester:
         left_rect = cv2.resize(left_rect, (320, 240))
         depth_color = cv2.resize(depth_color, (320, 240))
 
-        # Draw target detection on left frame
-        left_with_target = self._draw_target_overlay(left_rect.copy())
-
-        # Create info panel
-        info_panel = self._render_info_panel()
-
-        # Stack camera views and info horizontally
-        top_row = np.hstack([left_with_target, depth_color, info_panel])  # 960x240
+        if self._debug_view:
+            # Debug view: Virtual LIDAR + Depth with masks + Debug info panel
+            top_row = self._render_debug_view(depth_color)
+        else:
+            # Normal view: Left camera + Depth colorized + Info panel
+            left_with_target = self._draw_target_overlay(left_rect.copy())
+            info_panel = self._render_info_panel()
+            top_row = np.hstack([left_with_target, depth_color, info_panel])  # 960x240
 
         # Create status bar
         status_bar = self._render_status_bar()  # 960x40
@@ -654,6 +673,121 @@ class IntegrationTester:
         combined = np.vstack([top_row, status_bar])  # 960x280
 
         return combined
+
+    def _render_debug_view(self, depth_color: np.ndarray) -> np.ndarray:
+        """
+        Render debug view with 1D depth visualization and planner info.
+
+        Layout:
+        ┌─────────────────┬─────────────────┬─────────────────────┐
+        │  Virtual LIDAR  │ Depth+Masks     │   Planner Debug     │
+        │   (polar plot)  │                 │   (reason, etc.)    │
+        │    (320x240)    │   (320x240)     │     (320x240)       │
+        └─────────────────┴─────────────────┴─────────────────────┘
+
+        Args:
+            depth_color: Colorized depth image (fallback if no masks)
+
+        Returns:
+            Combined top row image (960x240)
+        """
+        # Panel 1: Virtual LIDAR with heading overlay
+        lidar_panel = self._render_lidar_panel()
+
+        # Panel 2: Depth with floor/obstacle masks
+        depth_panel = self._render_depth_masks_panel(depth_color)
+
+        # Panel 3: Planner debug info
+        debug_panel = self._render_planner_debug_panel()
+
+        return np.hstack([lidar_panel, depth_panel, debug_panel])
+
+    def _render_lidar_panel(self) -> np.ndarray:
+        """Render virtual LIDAR polar plot with heading overlays."""
+        if self._depth_viz is None or self._latest_preproc_result is None:
+            # Fallback placeholder
+            panel = np.zeros((240, 320, 3), dtype=np.uint8)
+            cv2.putText(panel, "No depth data", (100, 120),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1, cv2.LINE_AA)
+            return panel
+
+        preproc = self._latest_preproc_result
+        planner = self._latest_planner_result
+
+        # Get heading info
+        selected_heading = planner.best_heading_deg if planner else None
+        can_proceed = planner.can_proceed if planner else True
+
+        # Get target heading
+        target_heading = None
+        if self._latest_target_state is not None:
+            target_heading = self._latest_target_state.angle_deg
+
+        # Get safety distance from config
+        safety_distance = None
+        path_cfg = self._robot_config.get('path_planning', {})
+        if self._config.algorithm == 'apf':
+            apf_cfg = path_cfg.get('apf', {})
+            safety_distance = apf_cfg.get('emergency_stop_distance_mm', 150)
+        else:
+            fg_cfg = path_cfg.get('follow_gap', {})
+            safety_distance = fg_cfg.get('min_range_mm', 200)
+
+        # Draw virtual LIDAR with overlays
+        lidar_img = self._depth_viz.draw_virtual_lidar_with_heading(
+            distances=preproc.distances,
+            sector_angles=preproc.sector_angles,
+            valid_sectors=preproc.valid_sectors,
+            selected_heading_deg=selected_heading,
+            target_heading_deg=target_heading,
+            safety_distance_mm=safety_distance,
+            can_proceed=can_proceed
+        )
+
+        # Resize to fit panel (240x240 polar -> pad to 320x240)
+        h, w = lidar_img.shape[:2]
+        panel = np.zeros((240, 320, 3), dtype=np.uint8)
+        x_offset = (320 - w) // 2
+        y_offset = (240 - h) // 2
+        panel[y_offset:y_offset+h, x_offset:x_offset+w] = lidar_img
+
+        return panel
+
+    def _render_depth_masks_panel(self, depth_color: np.ndarray) -> np.ndarray:
+        """Render depth map with floor/obstacle mask overlays."""
+        if self._depth_viz is None or self._latest_preproc_result is None or self._latest_depth is None:
+            return depth_color
+
+        preproc = self._latest_preproc_result
+
+        # Draw depth with mask overlays
+        depth_with_masks = self._depth_viz.draw_depth_with_masks(
+            depth_map=self._latest_depth,
+            floor_mask=preproc.floor_mask,
+            obstacle_mask=preproc.obstacle_mask
+        )
+
+        # Resize to panel size
+        return cv2.resize(depth_with_masks, (320, 240))
+
+    def _render_planner_debug_panel(self) -> np.ndarray:
+        """Render planner debug info panel."""
+        if self._depth_viz is None:
+            return np.zeros((240, 320, 3), dtype=np.uint8)
+
+        # Get target info
+        target_angle = None
+        target_range = None
+        if self._latest_target_state is not None:
+            target_angle = self._latest_target_state.angle_deg
+            target_range = self._latest_target_state.range_mm
+
+        return self._depth_viz.draw_planner_debug_panel(
+            planner_result=self._latest_planner_result,
+            algorithm=self._config.algorithm,
+            target_angle_deg=target_angle,
+            target_range_mm=target_range
+        )
 
     def _draw_target_overlay(self, frame: np.ndarray) -> np.ndarray:
         """Draw target detection overlay on frame."""
@@ -769,8 +903,13 @@ class IntegrationTester:
         bar = np.zeros((40, 960, 3), dtype=np.uint8)
 
         # Controls help
-        cv2.putText(bar, "Q=Quit  E=Epipolar  C=Colormap", (10, 25),
+        cv2.putText(bar, "Q=Quit  E=Epipolar  C=Colormap  D=Debug", (10, 25),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1, cv2.LINE_AA)
+
+        # Debug view indicator
+        if self._debug_view:
+            cv2.putText(bar, "DEBUG", (350, 25),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
 
         # Sensor status indicators
         uwb_color = (100, 255, 100) if self._uwb_anchors and self._uwb_anchors.is_connected else (100, 100, 255)
@@ -812,6 +951,10 @@ class IntegrationTester:
             if self._matcher is not None:
                 self._matcher.set_colormap(COLORMAPS[self._colormap_index])
             print(f"Colormap: {COLORMAPS[self._colormap_index]}")
+
+        if key == ord('d') or key == ord('D'):
+            self._debug_view = not self._debug_view
+            print(f"Debug view: {'ON' if self._debug_view else 'OFF'}")
 
         return True
 
@@ -881,6 +1024,11 @@ Examples:
         default=None,
         help='Path to robot config YAML'
     )
+    parser.add_argument(
+        '--debug-view', '-d',
+        action='store_true',
+        help='Start with debug view enabled (shows 1D depth data and planner info)'
+    )
     return parser.parse_args()
 
 
@@ -891,7 +1039,8 @@ def main():
         calibration_path=args.calibration,
         device_id=args.device,
         config_path=args.config,
-        algorithm=args.algorithm
+        algorithm=args.algorithm,
+        debug_view=args.debug_view
     )
 
     tester = IntegrationTester(config)

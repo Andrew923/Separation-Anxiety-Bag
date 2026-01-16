@@ -1,11 +1,23 @@
 """
-Quadrature encoder interface using GPIO interrupts.
+Quadrature encoder interface using libgpiod edge detection.
 
 FIT0186 encoder specifications:
 - 16 PPR on motor shaft
 - 43.8:1 gearbox
 - ~700 CPR at output shaft (16 * 43.8 = 700.8)
+
+Wiring notes:
+- Encoder VCC to 5V, GND to Pi GND
+- Encoder A/B outputs connect directly to Pi GPIO (no voltage divider needed)
+- Internal pull-ups are enabled - works with open-collector encoder outputs
+- The encoder pulls LOW when active, Pi pull-up provides 3.3V HIGH
+
+Uses libgpiod for reliable edge detection (lgpio callbacks don't work on kernel 6.x).
 """
+
+import sys
+# Ensure system gpiod is available
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
 
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -13,10 +25,12 @@ import threading
 import time
 
 try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
+    import gpiod
+    GPIOD_AVAILABLE = True
 except ImportError:
-    GPIO_AVAILABLE = False
+    GPIOD_AVAILABLE = False
+
+GPIOCHIP = 'gpiochip0'
 
 
 @dataclass
@@ -30,15 +44,15 @@ class EncoderConfig:
 
 class QuadratureEncoder:
     """
-    Reads quadrature encoder using GPIO interrupts.
+    Reads quadrature encoder using gpiod edge detection in a background thread.
 
-    Uses both edges of channel A for 2x resolution.
-    Direction determined by state of channel B at each A edge.
+    Counts pulses on rising edge of channel A.
+    Direction determined by state of channel B at rising edge.
     """
 
     def __init__(self, config: EncoderConfig):
         """
-        Initialize encoder with interrupt handlers.
+        Initialize encoder with edge detection thread.
 
         Args:
             config: Encoder configuration
@@ -50,50 +64,106 @@ class QuadratureEncoder:
         self._last_count: int = 0
         self._velocity: float = 0.0
         self._initialized = False
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        
+        # gpiod objects
+        self._chip: Optional[gpiod.Chip] = None
+        self._line_a: Optional[gpiod.Line] = None
+        self._line_b: Optional[gpiod.Line] = None
 
-        if GPIO_AVAILABLE:
-            self._setup_gpio()
+        if GPIOD_AVAILABLE:
+            self._setup_gpiod()
 
-    def _setup_gpio(self) -> None:
-        """Configure GPIO pins and interrupt handlers."""
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
+    def _setup_gpiod(self) -> None:
+        """Configure GPIO pins using libgpiod."""
+        try:
+            self._chip = gpiod.Chip(GPIOCHIP)
+            
+            # Get lines
+            self._line_a = self._chip.get_line(self._config.channel_a_pin)
+            self._line_b = self._chip.get_line(self._config.channel_b_pin)
+            
+            # Request line A for rising edge events with pull-up
+            self._line_a.request(
+                consumer="encoder_a",
+                type=gpiod.LINE_REQ_EV_RISING_EDGE,
+                flags=gpiod.LINE_REQ_FLAG_BIAS_PULL_UP
+            )
+            
+            # Request line B as input with pull-up
+            self._line_b.request(
+                consumer="encoder_b",
+                type=gpiod.LINE_REQ_DIR_IN,
+                flags=gpiod.LINE_REQ_FLAG_BIAS_PULL_UP
+            )
+            
+            self._initialized = True
+            
+            # Start edge detection thread
+            self._running = True
+            self._thread = threading.Thread(target=self._edge_loop, daemon=True)
+            self._thread.start()
+            
+        except Exception as e:
+            print(f"Warning: gpiod setup failed for encoder on pin {self._config.channel_a_pin}: {e}")
+            self._cleanup_gpiod()
+            self._initialized = False
 
-        # Setup encoder pins as inputs with pull-up resistors
-        GPIO.setup(self._config.channel_a_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self._config.channel_b_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    def _edge_loop(self) -> None:
+        """Background thread that waits for edge events."""
+        inverted = self._config.inverted
+        
+        while self._running:
+            try:
+                # Wait for rising edge event with 50ms timeout
+                if self._line_a.event_wait(nsec=50_000_000):
+                    # Read and discard the event (clears the event queue)
+                    self._line_a.event_read()
+                    
+                    # Read B state for direction
+                    b_state = self._line_b.get_value()
+                    
+                    # Direction based on B state at A rising edge
+                    # B LOW = forward, B HIGH = reverse
+                    if b_state == 0:
+                        direction = 1
+                    else:
+                        direction = -1
+                    
+                    if inverted:
+                        direction = -direction
+                    
+                    with self._lock:
+                        self._count += direction
+                        
+            except Exception:
+                # Handle case where lines are released during shutdown
+                if not self._running:
+                    break
 
-        # Add interrupt on channel A (both edges for 2x resolution)
-        GPIO.add_event_detect(
-            self._config.channel_a_pin,
-            GPIO.BOTH,
-            callback=self._on_channel_a_change
-        )
-
-        self._initialized = True
-
-    def _on_channel_a_change(self, channel: int) -> None:
-        """
-        Interrupt handler for channel A edges.
-
-        Determines direction based on channel B state.
-        """
-        a_state = GPIO.input(self._config.channel_a_pin)
-        b_state = GPIO.input(self._config.channel_b_pin)
-
-        # Quadrature decoding logic
-        # A rising + B low = forward, A rising + B high = reverse
-        # A falling + B high = forward, A falling + B low = reverse
-        if a_state == b_state:
-            direction = -1
-        else:
-            direction = 1
-
-        if self._config.inverted:
-            direction = -direction
-
-        with self._lock:
-            self._count += direction
+    def _cleanup_gpiod(self) -> None:
+        """Release gpiod resources."""
+        if self._line_a is not None:
+            try:
+                self._line_a.release()
+            except Exception:
+                pass
+            self._line_a = None
+            
+        if self._line_b is not None:
+            try:
+                self._line_b.release()
+            except Exception:
+                pass
+            self._line_b = None
+            
+        if self._chip is not None:
+            try:
+                self._chip.close()
+            except Exception:
+                pass
+            self._chip = None
 
     def get_count(self) -> int:
         """
@@ -157,13 +227,20 @@ class QuadratureEncoder:
             self._last_time = time.time()
 
     def cleanup(self) -> None:
-        """Remove interrupt handlers and cleanup GPIO."""
-        if self._initialized and GPIO_AVAILABLE:
-            try:
-                GPIO.remove_event_detect(self._config.channel_a_pin)
-            except Exception:
-                pass
-            self._initialized = False
+        """Stop edge detection thread and cleanup GPIO."""
+        # Stop the thread
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=0.2)
+            self._thread = None
+
+        self._cleanup_gpiod()
+        self._initialized = False
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if encoder was successfully initialized."""
+        return self._initialized
 
 
 class DualEncoders:
@@ -239,3 +316,8 @@ class DualEncoders:
         """Cleanup both encoders."""
         self._left.cleanup()
         self._right.cleanup()
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if both encoders were successfully initialized."""
+        return self._left.is_initialized and self._right.is_initialized

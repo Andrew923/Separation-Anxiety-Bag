@@ -3,8 +3,8 @@ Robot control module for person-following robot.
 
 Components:
 - gpio_config: GPIO pin configuration management
-- motor_driver: Cytron MDD10A motor driver interface
-- encoder: Quadrature encoder reading
+- motor_driver: 3-pin H-bridge motor driver interface (lgpio)
+- encoder: Quadrature encoder reading (libgpiod)
 - differential_drive: PID-controlled differential drive
 - odometry: Wheel odometry for pose tracking
 - uwb_tracker: RYUW122 UWB module communication
@@ -22,8 +22,9 @@ Components:
 """
 
 from .gpio_config import GPIOConfig, load_gpio_config
+from .gpio_manager import GPIOManager
 from .motor_driver import MotorDriver, DualMotorDriver
-from .encoder import QuadratureEncoder, DualEncoders
+from .encoder import QuadratureEncoder, DualEncoders, EncoderConfig
 from .differential_drive import PIDController, DifferentialDriveController
 from .odometry import Pose2D, WheelOdometry
 from .uwb_tracker import (
@@ -52,8 +53,9 @@ from .tracking_camera import TrackingCamera, TrackingCameraConfig
 
 __all__ = [
     'GPIOConfig', 'load_gpio_config',
+    'GPIOManager',
     'MotorDriver', 'DualMotorDriver',
-    'QuadratureEncoder', 'DualEncoders',
+    'QuadratureEncoder', 'DualEncoders', 'EncoderConfig',
     'PIDController', 'DifferentialDriveController',
     'Pose2D', 'WheelOdometry',
     'RYUW122', 'DualUWBAnchors', 'UWBModuleConfig',

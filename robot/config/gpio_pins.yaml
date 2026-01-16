@@ -2,13 +2,21 @@
 # All BCM pin numbers
 # Hardware is not yet wired - adjust pins as needed
 
+# Motor driver uses 3-pin H-bridge interface (IN1, IN2, ENA)
+# Control logic:
+#   Forward:  IN1=HIGH, IN2=LOW,  ENA=PWM
+#   Reverse:  IN1=LOW,  IN2=HIGH, ENA=PWM
+#   Coast:    IN1=HIGH, IN2=HIGH, ENA=0
+#   Brake:    IN1=LOW,  IN2=LOW,  ENA=any
 motors:
   left:
-    pwm_pin: 12          # Hardware PWM0 (GPIO 12)
-    dir_pin: 5           # Direction control
+    in1_pin: 26          # Direction control 1
+    in2_pin: 20          # Direction control 2
+    ena_pin: 21          # PWM speed control
   right:
-    pwm_pin: 13          # Hardware PWM1 (GPIO 13)
-    dir_pin: 6           # Direction control
+    in1_pin: 16          # Direction control 1
+    in2_pin: 19          # Direction control 2
+    ena_pin: 24          # PWM speed control
 
 encoders:
   left:
@@ -28,4 +36,4 @@ uwb:
 
 # PWM Configuration
 pwm:
-  frequency: 20000       # 20kHz PWM frequency (inaudible)
+  frequency: 10000       # 10kHz PWM frequency (max for motor controller)

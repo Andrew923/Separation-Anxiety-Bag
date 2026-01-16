@@ -10,9 +10,10 @@ import yaml
 
 @dataclass
 class MotorPins:
-    """Pin configuration for a single motor."""
-    pwm_pin: int
-    dir_pin: int
+    """Pin configuration for a single motor (3-pin H-bridge interface)."""
+    in1_pin: int
+    in2_pin: int
+    ena_pin: int
 
 
 @dataclass
@@ -38,7 +39,7 @@ class GPIOConfig:
     right_encoder: EncoderPins
     uwb_anchor1: UWBConfig
     uwb_anchor2: UWBConfig
-    pwm_frequency: int = 20000
+    pwm_frequency: int = 10000
 
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'GPIOConfig':
@@ -49,12 +50,14 @@ class GPIOConfig:
         pwm = config.get('pwm', {})
 
         left_motor = MotorPins(
-            pwm_pin=motors.get('left', {}).get('pwm_pin', 12),
-            dir_pin=motors.get('left', {}).get('dir_pin', 5)
+            in1_pin=motors.get('left', {}).get('in1_pin', 26),
+            in2_pin=motors.get('left', {}).get('in2_pin', 20),
+            ena_pin=motors.get('left', {}).get('ena_pin', 21)
         )
         right_motor = MotorPins(
-            pwm_pin=motors.get('right', {}).get('pwm_pin', 13),
-            dir_pin=motors.get('right', {}).get('dir_pin', 6)
+            in1_pin=motors.get('right', {}).get('in1_pin', 16),
+            in2_pin=motors.get('right', {}).get('in2_pin', 19),
+            ena_pin=motors.get('right', {}).get('ena_pin', 24)
         )
         left_encoder = EncoderPins(
             channel_a=encoders.get('left', {}).get('channel_a', 17),
@@ -80,7 +83,7 @@ class GPIOConfig:
             right_encoder=right_encoder,
             uwb_anchor1=uwb_anchor1,
             uwb_anchor2=uwb_anchor2,
-            pwm_frequency=pwm.get('frequency', 20000)
+            pwm_frequency=pwm.get('frequency', 10000)
         )
 
     @classmethod

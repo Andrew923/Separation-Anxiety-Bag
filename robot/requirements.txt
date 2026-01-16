@@ -1,6 +1,8 @@
 # Robot control dependencies
 
 # GPIO control for Raspberry Pi
+# lgpio is preferred for kernel 6.x compatibility (edge detection)
+lgpio>=0.2.0
 RPi.GPIO>=0.7.0
 
 # Serial communication for UWB

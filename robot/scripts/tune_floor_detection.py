@@ -17,23 +17,22 @@ import numpy as np
 import yaml
 
 # Add parent directories to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'vision'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.depth_preprocessor import DepthPreprocessor, DepthPreprocessorConfig
-from src.floor_detection import (
+from robot.src.depth_preprocessor import DepthPreprocessor, DepthPreprocessorConfig
+from robot.src.floor_detection import (
     HeightBasedFloorDetector,
     HeightBasedFloorConfig,
     AdaptiveFloorDetector,
     AdaptiveFloorConfig,
 )
-from src.visualizers.depth_preprocessor_viz import DepthPreprocessorVisualizer
-from src.gpio_config import load_robot_config
+from robot.src.visualizers.depth_preprocessor_viz import DepthPreprocessorVisualizer
+from robot.src.gpio_config import load_robot_config
 
 # Import vision modules
-from src.camera import StereoCamera
-from src.calibration import load_calibration
-from src.stereo_matcher import StereoMatcher, SGBMParams, WLSParams
+from vision.src.camera import StereoCamera
+from vision.src.calibration import load_calibration
+from vision.src.stereo_matcher import StereoMatcher, SGBMParams, WLSParams
 
 
 class FloorDetectionTuner:

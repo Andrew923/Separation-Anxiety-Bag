@@ -3,15 +3,15 @@
 # Physical Parameters
 robot:
   wheel_diameter_mm: 52.0
-  wheel_base_mm: 200.0         # Distance between wheel centers - ADJUST TO ACTUAL
-  encoder_cpr: 700             # Counts per revolution at output (16 PPR * 43.8:1)
-  max_rpm: 251                 # No-load RPM of motors
-  gear_ratio: 43.8
-  robot_width_mm: 300.0        # Robot width for obstacle clearance calculations
+  wheel_base_mm: 215.9         # Distance between wheel centers
+  encoder_cpr: 233             # Counts per wheel revolution (700 motor CPR ÷ 3 wheel gear)
+  max_rpm: 753                 # Max wheel RPM (251 motor RPM × 3 wheel gear)
+  gear_ratio: 131.4            # Total gear ratio: 43.8 motor × 3 wheel = 131.4:1
+  robot_width_mm: 406.4        # Robot width for obstacle clearance calculations
 
 # Motor Configuration
 motors:
-  deadband: 10                 # PWM % below which motors don't move
+  deadband: 2                 # PWM % below which motors don't move
   ramp_rate: 50                # Max PWM change per control cycle
 
 # PID Configuration
@@ -19,19 +19,19 @@ pid:
   left:
     kp: 1.5
     ki: 0.5
-    kd: 0.05
+    kd: 0.0
     integral_limit: 100.0
     output_limit: 100.0
   right:
     kp: 1.5
     ki: 0.5
-    kd: 0.05
+    kd: 0.0
     integral_limit: 100.0
     output_limit: 100.0
   heading:
-    kp: 2.0
-    ki: 0.1
-    kd: 0.2
+    kp: 5.0
+    ki: 0.0
+    kd: 0.0
     integral_limit: 50.0
     output_limit: 100.0
 
@@ -44,8 +44,8 @@ uwb:
   target_address: "TAG001"       # Address of TAG to track
   # Anchor positions relative to robot center (x, y, z) in mm
   # x: positive = right, y: positive = forward, z: positive = up
-  anchor1_offset_mm: [-130.0, 50.0, 0.0]
-  anchor2_offset_mm: [130.0, 50.0, 0.0]
+  anchor1_offset_mm: [165.0, 0.0, 0.0]
+  anchor2_offset_mm: [-165.0, 0.0, 0.0]
   timeout_ms: 100
   max_range_mm: 15000          # 15m max range
   # Range filtering to reduce noise and angle jitter
@@ -78,17 +78,21 @@ control:
   sensor_timeout_ms: 500       # Consider sensor dead after this
 
 # Camera Configuration (for depth integration)
+# Note: These FOV values are used for coordinate mapping (pixels -> angles).
+# Distance calculation (Z) uses the calibration files (.npy).
+# If you change the lens, you MUST recalibrate AND update these values.
 camera:
-  horizontal_fov_deg: 60.0     # Adjust based on actual camera
-  vertical_fov_deg: 45.0
-  height_mm: 200.0             # Camera height above ground
-  tilt_deg: 0.0                # Tilt angle (positive = down)
+  horizontal_fov_deg: 90.0     # Advertised 90 degree wide angle
+  vertical_fov_deg: 73.7       # Calculated for 4:3 aspect ratio with 90 deg H-FOV
+  height_mm: 139.7             # Camera height above ground
+  tilt_deg: -8                # Tilt angle (positive = down)
 
 # Stereo Camera Configuration (for depth/obstacle detection)
 stereo_camera:
   device_id: 0
   resolution: "low"            # "low" (320x240), "medium" (640x480), "high" (1280x960)
   fps: 30
+  flip_180: true               # Set to true if camera is mounted upside down
   calibration_path: "vision/data/calibration_data"
   # WLS (Weighted Least Squares) post-filtering for improved depth quality
   wls_filter:
@@ -99,40 +103,43 @@ stereo_camera:
 
 # Tracking Camera Configuration (for brightness-based target detection)
 # Separate single camera that runs at low exposure to detect flashlights
+# Set enabled: false to use UWB-only mode (saves battery)
 tracking_camera:
+  enabled: false                # Set to false to disable tracking camera (UWB-only mode)
   device_id: 2
   resolution: [640, 480]       # Min MJPEG resolution for this camera
   fps: 30
   exposure: 20                 # Low exposure to isolate bright lights
   auto_exposure: false
-  horizontal_fov_deg: 60.0     # Adjust based on actual camera
+  horizontal_fov_deg: 60.0     # Standard Pi Camera v2 FOV
 
 # Depth Preprocessing Configuration
 # Use tune_floor_detection.py to tune these parameters
 depth_preprocessing:
   min_range_mm: 200            # Ignore closer than this (robot body)
-  max_range_mm: 3000           # Ignore farther than this
+  max_range_mm: 2000           # Ignore farther than this
   num_sectors: 72              # Number of sectors in 1D output (like virtual LIDAR)
+  min_obstacle_area_px: 340    # Filter out small artifacts below this pixel area (0 = disabled)
 
   # Floor detection method: "height" or "adaptive"
   floor_detection_method: "height"
 
   # Height-based floor detection (used if method = "height")
   height_floor:
-    floor_threshold_mm: 50     # Ignore points below this height (floor)
-    robot_height_mm: 500       # Ignore points above this height (ceiling/over robot)
+    floor_threshold_mm: 75     # Ignore points below this height (floor)
+    robot_height_mm: 533       # Ignore points above this height (ceiling/over robot)
 
   # Adaptive floor detection (used if method = "adaptive")
   # Threshold scales with depth: threshold = base + depth * scaling_factor
   adaptive_floor:
     base_threshold_mm: 50
     depth_scaling_factor: 0.02
-    robot_height_mm: 500
+    robot_height_mm: 533
 
 # Path Planning Configuration
 # Select which algorithm to use for obstacle avoidance
 path_planning:
-  algorithm: "follow_gap"      # Options: "follow_gap", "apf"
+  algorithm: "apf"      # Options: "follow_gap", "apf"
 
 # Follow-the-Gap Configuration (used if algorithm = "follow_gap")
 # Finds gaps between obstacles and selects the best one

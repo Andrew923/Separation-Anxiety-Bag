@@ -180,6 +180,7 @@ class QuadratureEncoder:
         Get current velocity in counts per second.
 
         Computes velocity based on count change since last call.
+        Uses EMA filter to smooth noisy high-frequency readings.
 
         Returns:
             Velocity in counts per second
@@ -191,7 +192,12 @@ class QuadratureEncoder:
             dt = current_time - self._last_time
             if dt > 0:
                 dcount = current_count - self._last_count
-                self._velocity = dcount / dt
+                raw_velocity = dcount / dt
+
+                # EMA filter to smooth velocity (alpha=0.4 balances smoothing vs responsiveness)
+                # This is necessary because at high control rates (100Hz),
+                # low encoder counts per period cause jagged readings
+                self._velocity = 0.4 * raw_velocity + 0.6 * self._velocity
 
             self._last_time = current_time
             self._last_count = current_count

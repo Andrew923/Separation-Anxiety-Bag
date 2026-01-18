@@ -10,21 +10,21 @@
 #   Brake:    IN1=LOW,  IN2=LOW,  ENA=any
 motors:
   left:
-    in1_pin: 26          # Direction control 1
-    in2_pin: 20          # Direction control 2
-    ena_pin: 21          # PWM speed control
+    in1_pin: 26          # Direction control 1 
+    in2_pin: 20          # Direction control 2 
+    ena_pin: 12          # PWM speed control
   right:
-    in1_pin: 16          # Direction control 1
-    in2_pin: 19          # Direction control 2
-    ena_pin: 24          # PWM speed control
+    in1_pin: 19          # Direction control 1 
+    in2_pin: 16          # Direction control 2 
+    ena_pin: 13          # PWM speed control
 
 encoders:
   left:
-    channel_a: 17        # Encoder A signal
-    channel_b: 27        # Encoder B signal
-  right:
-    channel_a: 22        # Encoder A signal
+    channel_a: 22        # Encoder A signal (swapped - was on right)
     channel_b: 23        # Encoder B signal
+  right:
+    channel_a: 27        # Encoder A signal (swapped - was on left)
+    channel_b: 17        # Encoder B signal
 
 uwb:
   anchor1:

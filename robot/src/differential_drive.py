@@ -29,9 +29,12 @@ class DriveConfig:
     wheel_base_mm: float = 200.0
     encoder_cpr: int = 700
     max_rpm: float = 251.0
+    deadband: float = 0.0
     left_pid: PIDConfig = field(default_factory=PIDConfig)
     right_pid: PIDConfig = field(default_factory=PIDConfig)
+    heading_pid: PIDConfig = field(default_factory=PIDConfig)
     control_rate_hz: float = 100.0
+    heading_correction_enabled: bool = True
 
 
 class PIDController:
@@ -171,10 +174,25 @@ class DifferentialDriveController:
         self._left_pid = PIDController(config.left_pid)
         self._right_pid = PIDController(config.right_pid)
 
+        # Heading PID for straight-line correction
+        self._heading_pid = PIDController(config.heading_pid)
+
         # Setpoints (in RPM)
         self._left_setpoint: float = 0.0
         self._right_setpoint: float = 0.0
         self._setpoint_lock = threading.Lock()
+
+        # Measured speeds (cached from control loop to avoid race conditions)
+        self._left_actual: float = 0.0
+        self._right_actual: float = 0.0
+        self._actual_lock = threading.Lock()
+
+        # Heading tracking state
+        self._target_heading: float = 0.0  # radians
+        self._current_heading: float = 0.0  # radians
+        self._last_left_count: int = 0
+        self._last_right_count: int = 0
+        self._heading_initialized: bool = False
 
         # Control loop state
         self._control_thread: Optional[threading.Thread] = None
@@ -182,6 +200,7 @@ class DifferentialDriveController:
 
         # Precompute constants
         self._wheel_circumference_mm = math.pi * config.wheel_diameter_mm
+        self._mm_per_count = self._wheel_circumference_mm / config.encoder_cpr
 
     def _velocity_to_wheel_rpms(
         self,
@@ -277,21 +296,22 @@ class DifferentialDriveController:
 
     def get_actual_wheel_speeds(self) -> Tuple[float, float]:
         """
-        Get actual wheel speeds from encoders.
+        Get actual wheel speeds (cached from control loop).
 
         Returns:
             Tuple of (left_rpm, right_rpm)
         """
-        return self._encoders.get_rpms()
+        with self._actual_lock:
+            return (self._left_actual, self._right_actual)
 
     def get_actual_velocity(self) -> Tuple[float, float]:
         """
-        Get actual robot velocity from encoders.
+        Get actual robot velocity (cached from control loop).
 
         Returns:
             Tuple of (linear_mm_s, angular_deg_s)
         """
-        left_rpm, right_rpm = self._encoders.get_rpms()
+        left_rpm, right_rpm = self.get_actual_wheel_speeds()
         return self._wheel_rpms_to_velocity(left_rpm, right_rpm)
 
     def start(self) -> None:
@@ -302,6 +322,12 @@ class DifferentialDriveController:
         self._running = True
         self._left_pid.reset()
         self._right_pid.reset()
+        self._heading_pid.reset()
+
+        # Reset heading tracking
+        self._heading_initialized = False
+        self._current_heading = 0.0
+        self._target_heading = 0.0
 
         self._control_thread = threading.Thread(
             target=self._control_loop,
@@ -323,11 +349,23 @@ class DifferentialDriveController:
         # Reset PIDs
         self._left_pid.reset()
         self._right_pid.reset()
+        self._heading_pid.reset()
 
         # Reset setpoints
         with self._setpoint_lock:
             self._left_setpoint = 0.0
             self._right_setpoint = 0.0
+
+    def _apply_deadband(self, output: float) -> float:
+        """Apply deadband compensation to motor output."""
+        deadband = self._config.deadband
+        if abs(output) < 1.0:
+            return 0.0
+        
+        if output > 0:
+            return min(100.0, output + deadband)
+        else:
+            return max(-100.0, output - deadband)
 
     def _control_loop(self) -> None:
         """Internal PID control loop (runs in thread)."""
@@ -344,9 +382,67 @@ class DifferentialDriveController:
             # Get actual speeds
             left_actual, right_actual = self._encoders.get_rpms()
 
+            # Cache for external readers (avoids race condition with get_actual_wheel_speeds)
+            with self._actual_lock:
+                self._left_actual = left_actual
+                self._right_actual = right_actual
+
+            # Update heading tracking from encoder counts
+            left_count, right_count = self._encoders.get_counts()
+            if not self._heading_initialized:
+                self._last_left_count = left_count
+                self._last_right_count = right_count
+                self._heading_initialized = True
+            else:
+                # Compute heading change from encoder differences
+                delta_left = left_count - self._last_left_count
+                delta_right = right_count - self._last_right_count
+                self._last_left_count = left_count
+                self._last_right_count = right_count
+
+                left_dist = delta_left * self._mm_per_count
+                right_dist = delta_right * self._mm_per_count
+                delta_heading = (right_dist - left_dist) / self._config.wheel_base_mm
+                self._current_heading += delta_heading
+
+            # Apply velocity deadzone to filter encoder noise
+            VELOCITY_DEADZONE_RPM = 5.0
+            if abs(left_actual) < VELOCITY_DEADZONE_RPM:
+                left_actual = 0.0
+            if abs(right_actual) < VELOCITY_DEADZONE_RPM:
+                right_actual = 0.0
+
+            # Apply heading correction to setpoints when driving straight
+            # (must be done BEFORE velocity PID, not after)
+            if (self._config.heading_correction_enabled and
+                abs(left_setpoint - right_setpoint) < 1.0 and
+                abs(left_setpoint) > 1.0):
+                # Driving straight - compute heading correction
+                heading_error = self._target_heading - self._current_heading
+                heading_correction = self._heading_pid.compute(0.0, -math.degrees(heading_error))
+
+                # Apply correction to setpoints: positive correction turns left
+                # (slow left setpoint, increase right setpoint)
+                left_setpoint -= heading_correction
+                right_setpoint += heading_correction
+            else:
+                # Turning or stopped - update target heading to current
+                self._target_heading = self._current_heading
+                self._heading_pid.reset()
+
+            # Reset PID integral when stationary to prevent windup
+            if abs(left_setpoint) < 1.0 and abs(left_actual) < VELOCITY_DEADZONE_RPM:
+                self._left_pid.reset()
+            if abs(right_setpoint) < 1.0 and abs(right_actual) < VELOCITY_DEADZONE_RPM:
+                self._right_pid.reset()
+
             # Compute PID outputs
             left_output = self._left_pid.compute(left_setpoint, left_actual)
             right_output = self._right_pid.compute(right_setpoint, right_actual)
+
+            # Apply deadband compensation
+            left_output = self._apply_deadband(left_output)
+            right_output = self._apply_deadband(right_output)
 
             # Apply to motors
             self._motors.set_speeds(left_output, right_output)

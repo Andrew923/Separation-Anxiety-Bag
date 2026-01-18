@@ -51,13 +51,13 @@ def test_manual(
     step: int = 10
 ):
     """
-    Manual motor control with keyboard and real-time encoder feedback.
+    Manual motor control with WASD arcade drive.
 
     Controls:
-        W/S - Increase/decrease left motor speed
-        I/K - Increase/decrease right motor speed
-        Space - Stop both motors (coast)
-        B - Brake both motors
+        W/S - Throttle (Forward/Reverse)
+        A/D - Turn (Left/Right)
+        Space - Stop (Coast)
+        B - Brake
         R - Reset encoder counts
         Q - Quit
 
@@ -66,15 +66,15 @@ def test_manual(
         encoders: Optional DualEncoders instance for feedback
         step: Speed increment per keypress (default 10%)
     """
-    left_speed = 0
-    right_speed = 0
+    throttle = 0.0
+    turn = 0.0
 
     print("\n" + "=" * 60)
-    print("Manual Motor Control")
+    print("Manual Arcade Control")
     print("=" * 60)
     print("Controls:")
-    print("  W/S   - Increase/decrease LEFT motor speed")
-    print("  I/K   - Increase/decrease RIGHT motor speed")
+    print("  W/S   - Throttle (Forward/Reverse)")
+    print("  A/D   - Turn (Left/Right)")
     print("  Space - Coast (stop both motors)")
     print("  B     - Brake (active braking)")
     if encoders:
@@ -90,12 +90,13 @@ def test_manual(
     try:
         while True:
             # Build status line
-            status = f"Motor: L={left_speed:+4d}% R={right_speed:+4d}%"
+            left_speed, right_speed = motors.get_speeds()
+            status = f"Input: Throt={throttle:+4.0f}% Turn={turn:+4.0f}% | Motor: L={left_speed:+4.0f}% R={right_speed:+4.0f}%"
 
             if encoders:
                 left_count, right_count = encoders.get_counts()
                 left_rpm, right_rpm = encoders.get_rpms()
-                status += f"  |  Enc: L={left_count:+6d} ({left_rpm:+6.1f} RPM)  R={right_count:+6d} ({right_rpm:+6.1f} RPM)"
+                status += f" | Enc: L={left_count:+6d} R={right_count:+6d}"
 
             # Display status
             print(f"\r{status}    ", end="")
@@ -113,40 +114,29 @@ def test_manual(
                 break
 
             elif key_lower == 'w':
-                # Increase left motor speed
-                left_speed = min(100, left_speed + step)
-                motors.left.set_speed(left_speed)
-
+                throttle = min(100, throttle + step)
             elif key_lower == 's':
-                # Decrease left motor speed
-                left_speed = max(-100, left_speed - step)
-                motors.left.set_speed(left_speed)
-
-            elif key_lower == 'i':
-                # Increase right motor speed
-                right_speed = min(100, right_speed + step)
-                motors.right.set_speed(right_speed)
-
-            elif key_lower == 'k':
-                # Decrease right motor speed
-                right_speed = max(-100, right_speed - step)
-                motors.right.set_speed(right_speed)
-
+                throttle = max(-100, throttle - step)
+            elif key_lower == 'a':
+                turn = max(-100, turn - step)  # Left is negative turn
+            elif key_lower == 'd':
+                turn = min(100, turn + step)   # Right is positive turn
             elif key == ' ':
-                # Coast - stop both motors
-                left_speed = 0
-                right_speed = 0
+                throttle = 0
+                turn = 0
                 motors.stop()
-
+                continue
             elif key_lower == 'b':
-                # Brake - active braking
-                left_speed = 0
-                right_speed = 0
+                throttle = 0
+                turn = 0
                 motors.brake()
-
+                continue
             elif key_lower == 'r' and encoders:
-                # Reset encoder counts
                 encoders.reset()
+                continue
+
+            # Apply mixing
+            motors.arcade_drive(throttle, turn)
 
     except KeyboardInterrupt:
         print("\n\nInterrupted.")
